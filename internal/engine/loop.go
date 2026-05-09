@@ -78,24 +78,22 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		// 4. 执行行动 (Action) 与 获取观察结果 (Observation)
 		log.Printf("[Engine] 模型请求调用 %d 个工具...\n", len(responseMsg.ToolCalls))
 
-		for _, toolCall := range responseMsg.ToolCalls {
-			log.Printf(" -> 🛠️ 执行工具: %s, 参数: %s\n", toolCall.Name, string(toolCall.Arguments))
+		//通过 Registry 并发执行全部工具调用
+		results := tools.ExecuteParallel(ctx, e.registry, responseMsg.ToolCalls, 10)
 
-			//通过 Registry 路由并执行底层工具
-			result := e.registry.Execute(ctx, toolCall)
-
+		for i, result := range results {
 			if result.IsError {
-				log.Printf(" -> ❌ 工具执行报错: %s\n", result.Output)
+				log.Printf(" -> ❌ 工具 %s 执行报错: %s\n", responseMsg.ToolCalls[i].Name, result.Output)
 			} else {
-				log.Printf(" -> ✅ 工具执行成功 (返回 %d 字节)\n", len(result.Output))
+				log.Printf(" -> ✅ 工具 %s 执行成功 (返回 %d 字节)\n", responseMsg.ToolCalls[i].Name, len(result.Output))
 			}
 
 			// 将工具执行的观察结果 (Observation) 封装为 User Message 追加到上下文中
-			// ToolCallID 必须携带！这是维系大模型推理链条的关键
+			// ToolCallID 必须携带！是维系大模型推理链条的关键
 			observationMsg := schema.Message{
 				Role:       schema.RoleUser,
 				Content:    result.Output,
-				ToolCallID: toolCall.ID,
+				ToolCallID: responseMsg.ToolCalls[i].ID,
 			}
 			contextHistory = append(contextHistory, observationMsg)
 		}
