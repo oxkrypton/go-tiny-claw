@@ -13,7 +13,7 @@ const (
 // Message 代表上下文中传递的单条消息
 type Message struct {
 	Role    Role   `json:"role"`
-	Content string `json:"context"` //存放纯文本内容
+	Content string `json:"content"` //存放纯文本内容
 
 	//如果模型调用工具，此字段将被填充 (支持并行调用多个工具)
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
