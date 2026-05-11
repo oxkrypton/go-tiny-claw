@@ -30,7 +30,11 @@ func NewOpenAIProvider(model string) *OpenAIProvider {
 	}
 
 	return &OpenAIProvider{
-		client: openai.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL)),
+		client: openai.NewClient(
+			option.WithAPIKey(apiKey),
+			option.WithBaseURL(baseURL),
+			option.WithJSONSet("thinking", map[string]string{"type": "disabled"}),
+		),
 		model:  model,
 	}
 }
