@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
@@ -19,6 +20,8 @@ type OpenAIProvider struct {
 
 // NewZhipuOpenAIProvider 构造函数：基于 OpenAI V3 SDK
 func NewOpenAIProvider(model string) *OpenAIProvider {
+	_ = godotenv.Load()
+	//从 .env 获取 API_KEY/baseURL
 	apiKey := os.Getenv("API_KEY")
 	if apiKey == "" {
 		panic("请设置 API_KEY 环境变量")
@@ -35,7 +38,7 @@ func NewOpenAIProvider(model string) *OpenAIProvider {
 			option.WithBaseURL(baseURL),
 			option.WithJSONSet("thinking", map[string]string{"type": "disabled"}),
 		),
-		model:  model,
+		model: model,
 	}
 }
 
@@ -104,7 +107,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 		if m, ok := toolDef.InputSchema.(map[string]interface{}); ok {
 			params = shared.FunctionParameters(m)
 		} else {
-			// fallvack:JSON往返序列化
+			// fallback:JSON往返序列化
 			b, _ := json.Marshal(toolDef.InputSchema)
 			_ = json.Unmarshal(b, &params)
 		}

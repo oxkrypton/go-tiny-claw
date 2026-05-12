@@ -6,49 +6,13 @@ import (
 	"log"
 	"os"
 
-	"github.com/joho/godotenv"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
-	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 )
 
-// 伪造的工具注册表 (用于测试 Provider 的工具提取能力)
-type mockRegistry struct{}
-
-func (m *mockRegistry) GetAvailableTools() []schema.ToolDefinition {
-	return []schema.ToolDefinition{
-		{
-			Name:        "get_weather",
-			Description: "获取指定城市的当前天气情况。",
-			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"city": map[string]interface{}{
-						"type": "string",
-					},
-				},
-				"required": []string{"city"},
-			},
-		},
-	}
-}
-
-func (m *mockRegistry) Execute(ctx context.Context, call schema.ToolCall) schema.ToolResult {
-	log.Printf("  -> [Mock 工具执行] 获取 %s 的天气中...\n", call.Name)
-	return schema.ToolResult{
-		ToolCallID: call.ID,
-		Output:     "API 返回：今天是晴天，气温 25 度。",
-		IsError:    false,
-	}
-}
-
 func main() {
-	_ = godotenv.Load()
-
-	if os.Getenv("API_KEY") == "" {
-		log.Fatal("请先导出 API_KEY 环境变量")
-	}
-
+	//获取工作区
 	workDir, _ := os.Getwd()
 
 	// 1. 初始化真实的 Provider大脑 (指向智谱 GLM-4.5)
@@ -56,7 +20,7 @@ func main() {
 	llmProvider := provider.NewOpenAIProvider("deepseek-v4-flash")
 
 	// 2. 注入伪造的工具注册表
-	registry := &mockRegistry{}
+	registry := tools.Registry.GetAvailableTools()
 
 	// 3. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段！)
 	eng := engine.NewAgentEngine(llmProvider, registry, workDir, false)
