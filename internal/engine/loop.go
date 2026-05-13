@@ -2,8 +2,11 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
@@ -54,6 +57,9 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		turnCount++
 		log.Printf("========== [Turn %d] 开始 ==========\n", turnCount)
 
+		// 将当前轮次的完整 context 写入 session.json，方便调试
+		e.dumpSession(turnCount, contextHistory)
+
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
 
@@ -94,6 +100,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		// 如果模型没有请求任何工具调用，说明它认为任务已经完成，跳出循环
 		if len(actionResp.ToolCalls) == 0 {
 			log.Println("[Engine] 模型未请求调用工具, 任务完成，退出循环")
+			e.dumpSession(turnCount, contextHistory) // 最终状态也写入
 			break
 		}
 
@@ -122,4 +129,31 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 	}
 
 	return nil
+}
+
+// dumpSession 将当前轮次的完整上下文写入 session.json
+func (e *AgentEngine) dumpSession(turn int, history []schema.Message) {
+	type sessionData struct {
+		Turn    int              `json:"turn"`
+		Context []schema.Message `json:"context"`
+	}
+
+	data := sessionData{
+		Turn:    turn,
+		Context: history,
+	}
+
+	jsonBytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		log.Printf("[Session] 序列化 context 失败: %v", err)
+		return
+	}
+
+	sessionPath := filepath.Join(e.WorkDir, "session.json")
+	if err := os.WriteFile(sessionPath, jsonBytes, 0644); err != nil {
+		log.Printf("[Session] 写入 session.json 失败: %v", err)
+		return
+	}
+
+	log.Printf("[Session] Turn %d 的完整 context 已写入 session.json", turn)
 }
