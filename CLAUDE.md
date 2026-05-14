@@ -30,7 +30,7 @@ go test ./internal/tools/ -run TestName -v
    - *Phase 2 (Action)*: calls the LLM again with the thinking trace in context and tools restored. The model can emit tool calls or finish with a text reply.
    - Tool results (Observations) are appended as user messages with `ToolCallID` set, preserving the reasoning chain. The loop exits when the model returns zero tool calls.
    - Each turn dumps the full context history to `session.json` for debugging.
-3. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate`). Each implementation translates the internal `schema.Message` format into provider-specific request shapes and back. `OpenAIProvider` loads `.env` via godotenv; `ClaudeProvider` reads env vars directly.
+3. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate`). Each implementation translates the internal `schema.Message` format into provider-specific request shapes and back. Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
 4. **Tools** (`internal/tools/`) — `Registry` maps tool names to `BaseTool` implementations. `BaseTool` has three methods: `Name()`, `Definition()` (JSON Schema), and `Execute(args)`. Tools are sandboxed to `workDir`. `ExecuteParallel` runs tool calls concurrently via `errgroup`, preserving result order.
 5. **Schema** (`internal/schema/message.go`) — domain types shared across layers: `Message` (role + content + optional tool calls/results), `ToolCall`, `ToolResult`, and `ToolDefinition`.
 
