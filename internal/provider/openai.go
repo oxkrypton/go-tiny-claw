@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
-	"github.com/joho/godotenv"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
@@ -18,19 +16,8 @@ type OpenAIProvider struct {
 	model  string
 }
 
-// NewZhipuOpenAIProvider 构造函数：基于 OpenAI V3 SDK
 func NewOpenAIProvider(model string) *OpenAIProvider {
-	_ = godotenv.Load()
-	//从 .env 获取 API_KEY/baseURL
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		panic("请设置 API_KEY 环境变量")
-	}
-
-	baseURL := os.Getenv("baseURL")
-	if baseURL == "" {
-		panic("请设置 baseURL 环境变量")
-	}
+	apiKey, baseURL := loadConfig()
 
 	return &OpenAIProvider{
 		client: openai.NewClient(

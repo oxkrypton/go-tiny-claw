@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -17,16 +16,8 @@ type ClaudeProvider struct {
 	model  string
 }
 
-func NewZhipuClaudeProvider(model string) *ClaudeProvider {
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		panic("请设置 API_KEY 环境变量")
-	}
-
-	baseURL := os.Getenv("baseURL")
-	if baseURL == "" {
-		panic("请设置 baseURL 环境变量")
-	}
+func NewClaudeProvider(model string) *ClaudeProvider {
+	apiKey, baseURL := loadConfig()
 
 	return &ClaudeProvider{
 		client: anthropic.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL)),
