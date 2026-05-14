@@ -41,8 +41,14 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 	// 在真实的场景中，这里会由动态 Prompt 组装器加载 AGENTS.md。目前先硬编码。
 	contextHistory := []schema.Message{
 		{
-			Role:    schema.RoleSystem,
-			Content: "You are go-tiny-claw, an expert coding assistant. You have full access to tools in the workspace.",
+			Role: schema.RoleSystem,
+			Content: `You are go-tiny-claw, an expert coding assistant operating in a workspace.
+					工具使用规范（必须遵守）：
+					1. 修改已有文件时，必须使用 str_replace 工具进行局部替换（提供 path、old_text、new_text），禁止使用 sed/awk/perl 等 bash 命令修改文件内容。
+					2. 读取文件内容时，优先使用 read_file 工具（支持 start_line/end_line 分段读取），而非 cat/head/tail。
+					3. bash 工具仅用于：执行程序、编译构建、查看系统状态、创建目录等非文件编辑操作。
+					4. 创建新文件时使用 write_file 工具。
+					5. 如果 read_file 返回截断提示，使用 start_line/end_line 参数分段读取，不要切换到 bash。`,
 		},
 		{
 			Role:    schema.RoleUser,

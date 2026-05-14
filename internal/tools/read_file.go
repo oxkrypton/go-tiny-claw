@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
@@ -39,6 +40,14 @@ func (t *ReadFileTool) Definition() schema.ToolDefinition {
 					"type":        "string",
 					"description": "要读取的文件路径, 如 cmd/claw/main.go",
 				},
+				"start_line": map[string]interface{}{
+					"type":        "integer",
+					"description": "起始行号（从 1 开始，包含该行）。不传则从第 1 行开始。",
+				},
+				"end_line": map[string]interface{}{
+					"type":        "integer",
+					"description": "结束行号（包含该行）。不传则读到文件末尾。",
+				},
 			},
 			"required": []string{"path"},
 		},
@@ -47,7 +56,9 @@ func (t *ReadFileTool) Definition() schema.ToolDefinition {
 
 // readFileArgs 内部定义用于反序列化的结构体
 type readFileArgs struct {
-	Path string `json:"path"`
+	Path      string `json:"path"`
+	StartLine *int   `json:"start_line"` // 指针, nil 表示未传
+	EndLine   *int   `json:"end_line"`
 }
 
 func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -72,15 +83,45 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", fmt.Errorf("读取文件内容失败: %w", err)
 	}
+	//按分行符确定行号
+	lines := strings.Split(string(content), "\n")
+
+	//确定方位 (默认全文)
+	start := 1
+	end := len(lines)
+
+	if input.StartLine != nil {
+		start = *input.StartLine
+	}
+	if input.EndLine != nil {
+		end = *input.EndLine
+	}
+
+	// 边界校验
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > end {
+		return "", fmt.Errorf("start_line(%d) 不能大于 end_line(%d)", start, end)
+	}
+
+	//切片取行 (行号从 1 开始, slice 索引从 0 开始)
+	selected := lines[start-1 : end]
+	result := strings.Join(selected, "\n")
 
 	// 4. 【核心防线】长度截断保护
 	// 为了防止大模型读取几百 MB 的日志文件导致 Context 瞬间爆炸 (OOM)，
 	// 在工具内部直接进行物理截断。
-	const maxLen = 8000
-	if len(content) > maxLen {
-		truncatedMsg := fmt.Sprintf("%s\n\n...[由于内容过长, 已被系统截断至前 %d 字节]...", string(content[:maxLen]), maxLen)
-		return truncatedMsg, nil
+	const maxLen = 50000
+	if len(result) > maxLen {
+		header := fmt.Sprintf("[文件: %s, 共 %d 行, 内容过长已截断]\n", input.Path, len(lines))
+		return header + result[:maxLen], nil
 	}
 
-	return string(content), nil
+	// 带上行号信息, 方便后续 str_replace 修改
+	header := fmt.Sprintf("[文件:%s, 行 %d-%d, 共 %d 行]\n", input.Path, start, end, len(lines))
+	return header + result, nil
 }
