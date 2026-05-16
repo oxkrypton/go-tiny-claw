@@ -26,7 +26,7 @@ func main() {
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir))
-	registry.Register(tools.NewStrReplaceTool(workDir))
+	registry.Register(tools.NewEditFileTool(workDir))
 
 	// 4. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段)
 	eng := engine.NewAgentEngine(llmProvider, registry, workDir, false)
