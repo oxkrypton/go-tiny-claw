@@ -32,6 +32,10 @@ go test ./internal/tools/ -run TestName -v
    - Each turn dumps the full context history to `session.json` for debugging.
 3. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate`). Each implementation translates the internal `schema.Message` format into provider-specific request shapes and back. Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
 4. **Tools** (`internal/tools/`) — `Registry` maps tool names to `BaseTool` implementations. `BaseTool` has three methods: `Name()`, `Definition()` (JSON Schema), and `Execute(args)`. Tools are sandboxed to `workDir`. `ExecuteParallel` runs tool calls concurrently via `errgroup`, preserving result order.
+   - `read_file` — reads file content with optional `start_line`/`end_line` range support.
+   - `write_file` — creates new files (refuses to overwrite existing ones).
+   - `edit_file` — performs exact string replacement within existing files. Matches `old_text` via precise count-first algorithm with newline normalization fallback. Uniqueness is enforced: matches to 0 or >1 locations return an error asking the model to retry.
+   - `bash` — executes shell commands with a 30s timeout, output truncated at 8000 bytes.
 5. **Schema** (`internal/schema/message.go`) — domain types shared across layers: `Message` (role + content + optional tool calls/results), `ToolCall`, `ToolResult`, and `ToolDefinition`.
 
 ### Provider switching
