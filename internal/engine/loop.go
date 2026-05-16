@@ -118,6 +118,9 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		// 长度与 ToolCalls 的数量完全一致
 		observationMsgs := make([]schema.Message, len(actionResp.ToolCalls))
 
+		//全局并发令牌池: 最多允许 5 个tool并行运行
+		sem := make(chan struct{}, 5)
+
 		//声明 WaitGroup 用于阻塞等待所有携程完成
 		var wg sync.WaitGroup
 
@@ -128,9 +131,14 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 			go func(idx int, call schema.ToolCall) {
 				defer wg.Done() //协程结束时计数器减一
 
+				// 获取令牌（如果 5 个槽位已满，这里会阻塞等待）
+				sem <- struct{}{}
+				// 确保执行完毕后释放令牌
+				defer func() { <-sem }()
+
 				log.Printf(" -> [Go-%d] 🛠️ 触发并行执行: %s\n", idx, call.Name)
 
-				//调用低沉 Registry 执行工具
+				//调用底层 Registry 执行工具
 				result := e.registry.Execute(ctx, call)
 
 				if result.IsError {
@@ -165,7 +173,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		}
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
 	}
-	
+
 	return nil
 }
 
