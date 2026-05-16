@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
@@ -113,27 +114,58 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		// 4. 执行行动 (Action) 与 获取观察结果 (Observation)
 		log.Printf("[Engine] 模型请求调用 %d 个工具...\n", len(actionResp.ToolCalls))
 
-		//通过 Registry 并发执行全部工具调用
-		results := tools.ExecuteParallel(ctx, e.registry, actionResp.ToolCalls, 10)
+		// 预分配一个固定长度的切片，用于安全地存放各个并发工具的执行结果（Observation） /
+		// 长度与 ToolCalls 的数量完全一致
+		observationMsgs := make([]schema.Message, len(actionResp.ToolCalls))
 
-		for i, result := range results {
-			if result.IsError {
-				log.Printf(" -> ❌ 工具 %s 执行报错: %s\n", actionResp.ToolCalls[i].Name, result.Output)
-			} else {
-				log.Printf(" -> ✅ 工具 %s 执行成功 (返回 %d 字节)\n", actionResp.ToolCalls[i].Name, len(result.Output))
-			}
+		//声明 WaitGroup 用于阻塞等待所有携程完成
+		var wg sync.WaitGroup
 
-			// 将工具执行的观察结果 (Observation) 封装为 User Message 追加到上下文中
-			// ToolCallID 必须携带！是维系大模型推理链条的关键
-			observationMsg := schema.Message{
-				Role:       schema.RoleUser,
-				Content:    result.Output,
-				ToolCallID: actionResp.ToolCalls[i].ID,
-			}
-			contextHistory = append(contextHistory, observationMsg)
+		for i, toolCall := range actionResp.ToolCalls {
+			wg.Add(1) //增加计数器
+
+			// 开启协程, 需要将索引 i 和 toolCall 作为参数传入匿名函数, 防止闭包变量
+			go func(idx int, call schema.ToolCall) {
+				defer wg.Done() //协程结束时计数器减一
+
+				log.Printf(" -> [Go-%d] 🛠️ 触发并行执行: %s\n", idx, call.Name)
+
+				//调用低沉 Registry 执行工具
+				result := e.registry.Execute(ctx, call)
+
+				if result.IsError {
+					log.Printf(" -> [Go-%d] ❌ 工具执行报错: %s\n", idx, result.Output)
+				} else {
+					log.Printf(" -> [Go-%d] ✅ 工具执行成功 (返回 %d 字节)\n", idx, len(result.Output))
+				}
+
+				// 将工具执行的观察结果 (Observation) 封装为 User Message 追加到上下文中
+				// ToolCallID 必须携带！是维系大模型推理链条的关键
+				obsMsg := schema.Message{
+					Role:       schema.RoleUser,
+					Content:    result.Output,
+					ToolCallID: call.ID,
+				}
+
+				// 【线程安全】: 由于每个 Goroutine 操作的是预分配切片的不同索引，
+				// 这里不需要加锁 (Mutex)，性能极高！
+				observationMsgs[idx] = obsMsg
+
+			}(i, toolCall)
 		}
-	}
 
+		// Join 阻塞等待: 主循环挂起, 直到所有的并发协程全部执行完毕
+		wg.Wait()
+		log.Println("[Engine] 所有并发工具执行完毕，开始聚合观察结果 (Observation)...")
+
+		// 5. 聚合装填：将并行的结果，按照原本的顺序，一次性追加到上下文时间线中 /
+		// 这等价于 contextHistory = append(contextHistory, observationMsgs...)
+		for _, obs := range observationMsgs {
+			contextHistory = append(contextHistory, obs)
+		}
+		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
+	}
+	
 	return nil
 }
 
@@ -155,7 +187,9 @@ func (e *AgentEngine) dumpSession(turn int, history []schema.Message) {
 		return
 	}
 
-	sessionPath := filepath.Join(e.WorkDir, "session.json")
+	sessionPath := filepath.Join(e.WorkDir, "testdata", "session.json")
+	// 确保 testdata 目录存在
+	os.MkdirAll(filepath.Dir(sessionPath), 0755)
 	if err := os.WriteFile(sessionPath, jsonBytes, 0644); err != nil {
 		log.Printf("[Session] 写入 session.json 失败: %v", err)
 		return

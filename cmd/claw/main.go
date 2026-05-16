@@ -33,15 +33,8 @@ func main() {
 
 	// 设定测试任务：测试 agent 对已有文件的修改能力
 	prompt := `
-请帮我完成以下两个任务：
-
-任务 1：修改 testdata/big_config.yaml
-- 将 database section 中的 host 从 "localhost" 改为 "db.production.internal"，port 从 3306 改为 5432。
-- 修改完成后确认修改正确。
-
-任务 2：修改 testdata/nested.py
-- 将 process_batch 方法中最内层 try 块里的 except Exception as e 改为 except (ValueError, TypeError) as e。
-- 修改完成后确认修改正确。
+我当前目录下有 a.txt, b.txt, c.txt 三个文件。 
+为了节省时间，请你同时一次性读取这三个文件，并将它们的内容综合起来，告诉我它们分别记录了什么领域的信息。
 `
 
 	err := eng.Run(context.Background(), prompt)
