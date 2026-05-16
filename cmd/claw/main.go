@@ -26,17 +26,16 @@ func main() {
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir))
+	registry.Register(tools.NewEditFileTool(workDir))
 
-	// 3. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段)
+	// 4. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段)
 	eng := engine.NewAgentEngine(llmProvider, registry, workDir, false)
 
-	// 设定测试任务
-	prompt := ` 
-	请帮我执行以下操作： 
-	1. 用 bash 查看一下我当前电脑的 Go 版本。 
-	2. 帮我写一个简单的 helloworld.go 文件，输出 "Hello, go-tiny-claw!"。 
-	3. 用 bash 编译并运行这个 go 文件，确认它能正常工作。 
-	`
+	// 设定测试任务：测试 agent 对已有文件的修改能力
+	prompt := `
+我当前目录下有 a.txt, b.txt, c.txt 三个文件。 
+为了节省时间，请你同时一次性读取这三个文件，并将它们的内容综合起来，告诉我它们分别记录了什么领域的信息。
+`
 
 	err := eng.Run(context.Background(), prompt)
 	if err != nil {

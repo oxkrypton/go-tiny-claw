@@ -83,7 +83,7 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	// 【驾驭底线 4】：长度截断保护 (防 OOM)
-	const maxLen = 8000
+	const maxLen = 30000
 	if len(outputStr) > maxLen {
 		return fmt.Sprintf("%s\n\n...[终端输出过长，已截断至前 %d 字节]...", outputStr[:maxLen], maxLen), nil
 	}
