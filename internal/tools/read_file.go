@@ -125,3 +125,17 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	header := fmt.Sprintf("[文件:%s, 行 %d-%d, 共 %d 行]\n", input.Path, start, end, len(lines))
 	return header + result, nil
 }
+
+// LockHints 声明 read_file 只对目标 path 取读锁。
+// 路径归一化：先 join 到 workDir 再 Clean，得到绝对路径作为 lock key，
+// 避免 "./foo" 与 "foo" 这类等价字符串拿到不同的锁。
+func (t *ReadFileTool) LockHints(args json.RawMessage) ([]LockRequest, error) {
+	var input readFileArgs
+	if err := json.Unmarshal(args, &input); err != nil {
+		return nil, err
+	}
+	return []LockRequest{{
+		Path: filepath.Clean(filepath.Join(t.workDir, input.Path)),
+		Mode: LockRead,
+	}}, nil
+}

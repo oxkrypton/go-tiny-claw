@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
@@ -112,64 +111,27 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		}
 
 		// 4. 执行行动 (Action) 与 获取观察结果 (Observation)
+		// 并行调度与路径锁的细节都收敛在 registry.ExecuteParallel 内：
+		//   - 同路径串行（写独占、读共享），跨路径并行
+		//   - bash 等无法静态分析路径的工具会拿全局写锁，期间挡住所有文件类工具
+		// engine 这里只负责把结果按原顺序拼回 contextHistory。
 		log.Printf("[Engine] 模型请求调用 %d 个工具...\n", len(actionResp.ToolCalls))
 
-		// 预分配一个固定长度的切片，用于安全地存放各个并发工具的执行结果（Observation） /
-		// 长度与 ToolCalls 的数量完全一致
-		observationMsgs := make([]schema.Message, len(actionResp.ToolCalls))
+		results := e.registry.ExecuteParallel(ctx, actionResp.ToolCalls)
 
-		//全局并发令牌池: 最多允许 5 个tool并行运行
-		sem := make(chan struct{}, 5)
-
-		//声明 WaitGroup 用于阻塞等待所有携程完成
-		var wg sync.WaitGroup
-
-		for i, toolCall := range actionResp.ToolCalls {
-			wg.Add(1) //增加计数器
-
-			// 开启协程, 需要将索引 i 和 toolCall 作为参数传入匿名函数, 防止闭包变量
-			go func(idx int, call schema.ToolCall) {
-				defer wg.Done() //协程结束时计数器减一
-
-				// 获取令牌（如果 5 个槽位已满，这里会阻塞等待）
-				sem <- struct{}{}
-				// 确保执行完毕后释放令牌
-				defer func() { <-sem }()
-
-				log.Printf(" -> [Go-%d] 🛠️ 触发并行执行: %s\n", idx, call.Name)
-
-				//调用底层 Registry 执行工具
-				result := e.registry.Execute(ctx, call)
-
-				if result.IsError {
-					log.Printf(" -> [Go-%d] ❌ 工具执行报错: %s\n", idx, result.Output)
-				} else {
-					log.Printf(" -> [Go-%d] ✅ 工具执行成功 (返回 %d 字节)\n", idx, len(result.Output))
-				}
-
-				// 将工具执行的观察结果 (Observation) 封装为 User Message 追加到上下文中
-				// ToolCallID 必须携带！是维系大模型推理链条的关键
-				obsMsg := schema.Message{
-					Role:       schema.RoleUser,
-					Content:    result.Output,
-					ToolCallID: call.ID,
-				}
-
-				// 【线程安全】: 由于每个 Goroutine 操作的是预分配切片的不同索引，
-				// 这里不需要加锁 (Mutex)，性能极高！
-				observationMsgs[idx] = obsMsg
-
-			}(i, toolCall)
-		}
-
-		// Join 阻塞等待: 主循环挂起, 直到所有的并发协程全部执行完毕
-		wg.Wait()
-		log.Println("[Engine] 所有并发工具执行完毕，开始聚合观察结果 (Observation)...")
-
-		// 5. 聚合装填：将并行的结果，按照原本的顺序，一次性追加到上下文时间线中 /
-		// 这等价于 contextHistory = append(contextHistory, observationMsgs...)
-		for _, obs := range observationMsgs {
-			contextHistory = append(contextHistory, obs)
+		for i, result := range results {
+			call := actionResp.ToolCalls[i]
+			if result.IsError {
+				log.Printf(" -> [Go-%d] ❌ %s: %s\n", i, call.Name, result.Output)
+			} else {
+				log.Printf(" -> [Go-%d] ✅ %s (返回 %d 字节)\n", i, call.Name, len(result.Output))
+			}
+			// ToolCallID 必须携带，是维系大模型推理链条的关键
+			contextHistory = append(contextHistory, schema.Message{
+				Role:       schema.RoleUser,
+				Content:    result.Output,
+				ToolCallID: call.ID,
+			})
 		}
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
 	}

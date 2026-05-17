@@ -25,7 +25,7 @@ type Message struct {
 type ToolCall struct {
 	ID   string `json:"id"`   //工具调用的唯一 ID
 	Name string `json:"name"` //想要调用的工具名称 (例如 “bash”)
-	//Atguments 存放 JSON 参数。使用 RawMessage 是为了延迟解析，将解析责任交给具体的工具
+	//Arguments 存放 JSON 参数。使用 RawMessage 是为了延迟解析，将解析责任交给具体的工具
 	Arguments json.RawMessage `json:"arguments"`
 }
 

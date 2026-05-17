@@ -31,10 +31,35 @@ func main() {
 	// 4. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段)
 	eng := engine.NewAgentEngine(llmProvider, registry, workDir, false)
 
-	// 设定测试任务：测试 agent 对已有文件的修改能力
+	// 设定测试任务：在同一轮内**密集冲突同一路径**，让锁日志显示出真实的等待。
+	//
+	// 关键设计：
+	//   - 6 个 edit 都打在同一个文件 testdata/sandbox/code/server.go 上，
+	//     必然在 path 锁上排成一队，第 2 个之后每一个都会先 WAIT 再 GOT。
+	//   - 同时穿插 2 个对 server.go 的 read，写者持锁期间它们也得等。
+	//   - 再发一个 bash，演示 bash 抢全局写锁会把所有文件类工具挡住。
 	prompt := `
-我当前目录下有 a.txt, b.txt, c.txt 三个文件。 
-为了节省时间，请你同时一次性读取这三个文件，并将它们的内容综合起来，告诉我它们分别记录了什么领域的信息。
+请在**同一次回复中并行**发出下面所有工具调用，不要拆成多轮。
+注意：多个 edit_file 故意都改 testdata/sandbox/code/server.go 这一个文件，
+就是想观察同路径写写在 PathLockManager 中如何被串行化。
+
+read 调用：
+1. read_file 读 testdata/sandbox/code/server.go
+2. read_file 读 testdata/sandbox/code/server.go（再读一次）
+
+edit 调用（全部针对 testdata/sandbox/code/server.go）：
+3. edit_file 把 "listening" 改为 "Listening"
+4. edit_file 把 "Listening" 改为 "LISTENING"
+5. edit_file 把 ":%d" 改为 "port=%d"
+6. edit_file 把 "port int" 改为 "port uint16"
+
+bash 调用：
+7. bash 执行 wc -l testdata/sandbox/code/server.go
+
+完成后简单总结一下 server.go 最终被改成了什么样子。
+注意：edit_file 的 old_text 必须和上一步的实际文件内容匹配——
+但请你**先并行发出全部 7 个调用**，因为我要观察并发情况下的锁等待行为，
+即使后几个 edit 因为 old_text 不匹配而失败也没关系，那本身就是测试的一部分。
 `
 
 	err := eng.Run(context.Background(), prompt)

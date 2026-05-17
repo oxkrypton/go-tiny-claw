@@ -70,3 +70,15 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 	return fmt.Sprintf("成功将内容写入到文件: %s", input.Path), nil
 }
+
+// LockHints 声明 write_file 对目标 path 取独占写锁。
+func (t *WriteFileTool) LockHints(args json.RawMessage) ([]LockRequest, error) {
+	var input writeFileArgs
+	if err := json.Unmarshal(args, &input); err != nil {
+		return nil, err
+	}
+	return []LockRequest{{
+		Path: filepath.Clean(filepath.Join(t.workDir, input.Path)),
+		Mode: LockWrite,
+	}}, nil
+}
