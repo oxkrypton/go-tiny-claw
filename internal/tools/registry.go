@@ -25,6 +25,13 @@ type BaseTool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// ToolObserver 是工具执行过程的观察者接口。
+// 由调用方（如 engine）实现，注入到 ExecuteParallel 中。
+type ToolObserver interface {
+	OnToolCall(ctx context.Context, toolName string, args string)
+	OnToolResult(ctx context.Context, toolName string, result string, isError bool)
+}
+
 // LockHinter 是工具的可选接口：实现它来声明本次调用要锁哪些路径。
 // 没有实现的工具（典型的就是 bash）会被 Registry 视为"通配写"，进而抢全局写锁。
 type LockHinter interface {
@@ -43,7 +50,8 @@ type Registry interface {
 
 	// ExecuteParallel 并行执行同一轮内的所有工具调用，按路径锁调度。
 	// 返回切片的下标与入参 calls 一一对应，保证模型看到的 Observation 顺序与原 ToolCalls 一致。
-	ExecuteParallel(ctx context.Context, calls []schema.ToolCall) []schema.ToolResult
+	// obs 是可选的执行观察者，nil 表示不需要回调。
+	ExecuteParallel(ctx context.Context, calls []schema.ToolCall, obs ToolObserver) []schema.ToolResult
 }
 
 // registryImpl 是 Registry 接口的默认实现
@@ -109,7 +117,7 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 //   - 未实现 LockHinter 的工具（如 bash）：global Lock，期间挡住所有文件类工具。
 //
 // path 排序保证了多路径锁的获取顺序一致，从根上避免交叉死锁。
-func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolCall) []schema.ToolResult {
+func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolCall, obs ToolObserver) []schema.ToolResult {
 	results := make([]schema.ToolResult, len(calls))
 	sem := make(chan struct{}, 5)
 	var wg sync.WaitGroup
@@ -121,7 +129,17 @@ func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolC
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			if obs != nil {
+				obs.OnToolCall(ctx, call.Name, string(call.Arguments))
+			}
 			r.runWithLocks(ctx, call, &results[idx])
+			if obs != nil {
+				output := results[idx].Output
+				if len(output) > 200 {
+					output = output[:200] + "...(已截断)"
+				}
+				obs.OnToolResult(ctx, call.Name, output, results[idx].IsError)
+			}
 		}(i, call)
 	}
 	wg.Wait()
@@ -134,7 +152,7 @@ func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, o
 
 	hinter, ok := tool.(LockHinter)
 	if !ok {
-		// 当其他协程 RLock() 时, 阻塞 bash 操作, 
+		// 当其他协程 RLock() 时, 阻塞 bash 操作,
 		// bash 协程 RLock() 时, 同样让其他协程阻塞. 实现了全局锁
 		r.lockMgr.global.Lock()
 		defer r.lockMgr.global.Unlock()
@@ -155,7 +173,7 @@ func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, o
 	// 路径排序 + 同路径合并（R+W -> W），保证锁顺序一致并消除重入歧义。
 	hints = normalizeHints(hints)
 
-	// 每个协程走一遍是为了 bash 全局锁 
+	// 每个协程走一遍是为了 bash 全局锁
 	r.lockMgr.global.RLock()
 	defer r.lockMgr.global.RUnlock()
 
