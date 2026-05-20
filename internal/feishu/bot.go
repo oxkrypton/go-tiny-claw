@@ -11,7 +11,6 @@ import (
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
@@ -49,7 +48,6 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 	// 长连接模式下 verifyToken 和 encryptKey 填空字符串，SDK 内部自行鉴权
 	handler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			log.Printf("[Feishu] 收到事件回调，开始解析消息...")
 			contentStr := *event.Event.Message.Content
 			contentStr = strings.TrimPrefix(contentStr, `{"text":"`)
 			contentStr = strings.TrimSuffix(contentStr, `"}`)
@@ -63,10 +61,7 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 			return nil
 		})
 
-	cli := larkws.NewClient(b.appID, b.appSecret,
-		larkws.WithEventHandler(handler),
-		larkws.WithLogLevel(larkcore.LogLevelDebug),
-	)
+	cli := larkws.NewClient(b.appID, b.appSecret, larkws.WithEventHandler(handler))
 	return cli.Start(ctx)
 }
 
