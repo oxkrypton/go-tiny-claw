@@ -28,9 +28,9 @@ func main() {
 	registry.Register(tools.NewBashTool(workDir))
 	registry.Register(tools.NewEditFileTool(workDir))
 
-	// 4. 实例化并运行引擎，开启 EnableThinking = true (开启慢思考阶段)
-	eng := engine.NewAgentEngine(llmProvider, registry, workDir, false)
-	
+	// 4. 实例化并运行引擎
+	eng := engine.NewAgentEngine(llmProvider, registry, workDir)
+
 	//便于测试的终端输出器
 	reporter := engine.NewTerminalReporter()
 	prompt := `

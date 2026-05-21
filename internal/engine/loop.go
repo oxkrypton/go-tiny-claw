@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	ctxpkd "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
@@ -16,16 +17,16 @@ type AgentEngine struct {
 	registry tools.Registry
 	//WorkDir (工作区): 借鉴 OpenClaw的理念，Agent 必须有一个明确的物理边界
 	WorkDir string
-	//慢思考模式开关
-	EnableThinking bool
+	// 动态加载sysprompt/skill
+	composer ctxpkd.PromptComposer
 }
 
-func NewAgentEngine(p provider.LLMProvider, r tools.Registry, workDir string, enableThinking bool) *AgentEngine {
+func NewAgentEngine(p provider.LLMProvider, r tools.Registry, workDir string) *AgentEngine {
 	return &AgentEngine{
-		provider:       p,
-		registry:       r,
-		WorkDir:        workDir,
-		EnableThinking: enableThinking,
+		provider: p,
+		registry: r,
+		WorkDir:  workDir,
+		composer: *ctxpkd.NewPromptComposer(workDir),
 	}
 }
 
@@ -33,23 +34,12 @@ func NewAgentEngine(p provider.LLMProvider, r tools.Registry, workDir string, en
 func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Reporter) error {
 	log.Printf("[Engine] 引擎启动，锁定工作区: %s\n", e.WorkDir)
 
-	// 1. 初始化会话的 Context (上下文内存)
-	// 在真实的场景中，这里会由动态 Prompt 组装器加载 AGENTS.md。目前先硬编码。
+	// 1. 初始化会话的 Context (上下文内存), 动态 Prompt 组装器加载 AGENTS.md
+	systemMsg := e.composer.Build()
+
 	contextHistory := []schema.Message{
-		{
-			Role: schema.RoleSystem,
-			Content: `You are go-tiny-claw, an expert coding assistant operating in a workspace.
-					工具使用规范（必须遵守）：
-					1. 修改已有文件时，必须使用 edit_file 工具进行局部替换（提供 path、old_text、new_text），禁止使用 sed/awk/perl 等 bash 命令修改文件内容。
-					2. 读取文件内容时，优先使用 read_file 工具（支持 start_line/end_line 分段读取），而非 cat/head/tail。
-					3. bash 工具仅用于：执行程序、编译构建、查看系统状态、创建目录等非文件编辑操作。
-					4. 创建新文件时使用 write_file 工具。
-					5. 如果 read_file 返回截断提示，使用 start_line/end_line 参数分段读取，不要切换到 bash。`,
-		},
-		{
-			Role:    schema.RoleUser,
-			Content: userPrompt,
-		},
+		systemMsg, // 注入动态组装的内核、AGENTS.md 与 Skills
+		{Role: schema.RoleUser, Content: userPrompt},
 	}
 
 	turnCount := 0
@@ -64,27 +54,8 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
 
-		// ================= Phase 1: Thinking =================
-		if e.EnableThinking {
-			if reporter != nil {
-				// 【触发 Reporter】: 开始慢思考
-				reporter.OnThinking(ctx)
-
-			}
-			// 核心机制：传入的 availableTools 为 nil！
-			// 大模型看不到任何 JSON Schema，被迫只能输出纯文本的思考过程。
-			thinkResp, err := e.provider.Generate(ctx, contextHistory, nil)
-			if err != nil {
-				return fmt.Errorf("Thinking 阶段生成失败: %w", err)
-			}
-
-			if thinkResp.Content != "" {
-				contextHistory = append(contextHistory, *thinkResp)
-			}
-		}
-
-		// ================= Phase 2: Action =================
-		// contextHistory 包含了上一阶段的 Thinking Trace，模型会顺着逻辑结合恢复的 availableTools 发起调用
+		// ================= Action =================
+		// 每一轮都直接注入工具，让模型在同一次响应中决定回复文本或发起工具调用。
 		actionResp, err := e.provider.Generate(ctx, contextHistory, availableTools)
 		if err != nil {
 			return fmt.Errorf("Action 阶段生成失败: %w", err)
