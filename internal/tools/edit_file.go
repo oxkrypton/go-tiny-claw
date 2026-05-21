@@ -113,3 +113,15 @@ func Replace(originalContent, oldText, newText string) (string, error) {
 	// count == 0，L1 和 L2 都找不到
 	return "", fmt.Errorf("在文件中未找到 old_text 指定的内容, 请用 read_file 重新查看文件后再试")
 }
+
+// LockHints 声明 edit_file 对目标 path 取独占写锁。
+func (t *EditFileTool) LockHints(args json.RawMessage) ([]LockRequest, error) {
+	var input editFileArgs
+	if err := json.Unmarshal(args, &input); err != nil {
+		return nil, err
+	}
+	return []LockRequest{{
+		Path: filepath.Clean(filepath.Join(t.workDir, input.Path)),
+		Mode: LockWrite,
+	}}, nil
+}
