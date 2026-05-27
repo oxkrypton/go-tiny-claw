@@ -74,7 +74,7 @@ func (b *FeishuBot) handleAgentRun(chatId string, prompt string) {
 	}
 
 	// 启动引擎
-	err := b.engine.Run(context.Background(), prompt, reporter)
+	err := b.engine.Run(context.Background(), nil,reporter)
 	if err != nil {
 		reporter.sendMsg(fmt.Sprintf("❌ Agent 运行崩溃: %v", err))
 

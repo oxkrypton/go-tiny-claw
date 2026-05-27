@@ -2,10 +2,9 @@
 package tools
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
-	"time"
+	//"time"
 )
 
 // modeName 仅用于日志可读性
@@ -63,7 +62,7 @@ func NewPathLockManager() *PathLockManager {
 // 日志策略：在每个关键时刻打一行，方便观察"等待 → 拿到 → 释放"的全过程。
 // WAIT 与 GOT 之间的间隔就是被同路径上一个写者挡住的真实时间。
 func (p *PathLockManager) acquire(path string, mode LockMode) {
-	id := lockSeq.Add(1)
+	//id := lockSeq.Add(1)
 
 	p.mu.Lock()
 	e, ok := p.m[path]
@@ -72,11 +71,11 @@ func (p *PathLockManager) acquire(path string, mode LockMode) {
 		p.m[path] = e
 	}
 	e.refCount++
-	refNow := e.refCount
+	//refNow := e.refCount
 	p.mu.Unlock()
 
-	log.Printf("[Lock #%d] WAIT  %s path=%s refCount=%d", id, modeName(mode), path, refNow)
-	t0 := time.Now()
+	//log.Printf("[Lock #%d] WAIT  %s path=%s refCount=%d", id, modeName(mode), path, refNow)
+	//t0 := time.Now()
 
 	if mode == LockWrite {
 		e.rw.Lock()
@@ -84,7 +83,7 @@ func (p *PathLockManager) acquire(path string, mode LockMode) {
 		e.rw.RLock()
 	}
 
-	log.Printf("[Lock #%d] GOT   %s path=%s waited=%s", id, modeName(mode), path, time.Since(t0))
+	//log.Printf("[Lock #%d] GOT   %s path=%s waited=%s", id, modeName(mode), path, time.Since(t0))
 }
 
 // release 与 acquire 配对。refCount 归零时把 entry 从 map 中删除，回收容量。
@@ -101,11 +100,11 @@ func (p *PathLockManager) release(path string, mode LockMode) {
 
 	p.mu.Lock()
 	e.refCount--
-	refNow := e.refCount
+	//refNow := e.refCount
 	if e.refCount == 0 {
 		delete(p.m, path)
 	}
 	p.mu.Unlock()
 
-	log.Printf("[Lock] FREE  %s path=%s refCount=%d", modeName(mode), path, refNow)
+	//log.Printf("[Lock] FREE  %s path=%s refCount=%d", modeName(mode), path, refNow)
 }

@@ -28,7 +28,7 @@ func (c *PromptComposer) Build() schema.Message {
 	// 1. 极简内核 (Minimal Core) //
 	// 确立基本身份与最底线的红线纪律
 	promptBuilder.WriteString(`# 核心身份
-你名叫 go-tiny-claw，一个由驾驭工程驱动的骨灰级研发助手。
+你名叫 Jarvis，一个由驾驭工程驱动的骨灰级研发助手。
 你具备极简主义哲学，拒绝废话。你能通过系统提供的内置工具，创建、读取、修改和执行工作区中的代码。
 
 # 核心纪律 (CRITICAL)
