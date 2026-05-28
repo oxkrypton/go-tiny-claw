@@ -18,32 +18,32 @@ import (
 type AgentEngine struct {
 	provider provider.LLMProvider
 	registry tools.Registry
-	// 动态加载sysprompt/skill
-	composer *ctxpkg.PromptComposer
+	// 暴露给外部的计划模式开关
+	PlanMode bool
 	// 压缩器实例
 	compactor *ctxpkg.Compactor
+	// 动态加载sysprompt/skill
+	//composer *ctxpkg.PromptComposer
 }
 
-func NewAgentEngine(p provider.LLMProvider, r tools.Registry) *AgentEngine {
+func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *AgentEngine {
 	return &AgentEngine{
 		provider: p,
 		registry: r,
-		// (假装这里能获取到 WorkDir 初始化 Composer，生产环境中应在 Run 中动态构造)
-		composer: ctxpkg.NewPromptComposer("testdata"),
-		//【初始化压缩器】：为了便于今天的极端测试，我们将水位线阈值设积极（例如 3000 字符），
-		// 并保护最近的 6 条消息（大约两轮 Turn 的交互）
-		compactor: ctxpkg.NewCompactor(3000, 6),
+		PlanMode: planMode,
+		// 初始化压缩器: 并保护最近的 6 条消息（大约两轮 Turn 的交互）
+		compactor: ctxpkg.NewCompactor(20000, 6),
 	}
 }
 
 // Run 启动 Agent 的生命周期
 func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Reporter) error {
-	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s\n", session.ID, session.WorkDir)
+	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s (PlanMode: %v)\n", session.ID, session.WorkDir, e.PlanMode)
 
 	turnCount := 0
 
 	// 根据当前 Session 的工作区，动态组装最新的 System Prompt
-	composer := ctxpkg.NewPromptComposer(session.WorkDir)
+	composer := ctxpkg.NewPromptComposer(session.WorkDir, e.PlanMode)
 	systemMsg := composer.Build()
 
 	// 2. The Main Loop: 心跳开始 (标准的 ReAct 循环)
@@ -51,9 +51,8 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
 
-		// 1.【上下文组装】: System Prompt + 截取最近的 6 条消息作为 Working Memory
-		// 从 Session 提取出近期的 Working Memory (例如最近 20 条，给压缩器留下充足的判断空间)
-		workingMemory := session.GetWorkingMemory(6)
+		// 1.【上下文组装】: System Prompt + 截取最近的 20 条消息作为 Working Memory
+		workingMemory := session.GetWorkingMemory(20)
 
 		var contextHistory []schema.Message
 		contextHistory = append(contextHistory, systemMsg)

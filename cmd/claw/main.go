@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 
@@ -23,14 +24,14 @@ func main() {
 	// 2. 注入伪造的工具注册表
 	registry := tools.NewRegistry()
 
-	// 3.初始化真实的 Tool Registry
+	// 3.挂载 4 大基础工具
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir))
 	registry.Register(tools.NewEditFileTool(workDir))
 
 	// 4. 实例化并运行引擎
-	eng := engine.NewAgentEngine(llmProvider, registry)
+	eng := engine.NewAgentEngine(llmProvider, registry, true)
 
 	//便于测试的终端输出器
 	reporter := engine.NewTerminalReporter()
@@ -38,15 +39,13 @@ func main() {
 	sessionID := "test_oom_protection_001"
 	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
 
-	// 发起一个会导致读取大文件的恶意任务
-	prompt := ` 
-	请帮我执行以下三个步骤： 
-	1. 使用 bash 执行 echo "开始排查日志" 
-	2. 使用 read_file 工具读取当前目录下的巨大文件 testdata/mock_log.txt 
-	3. 使用 bash 执行 date 命令获取当前时间，并告诉我任务全部完成。 
-	`
+	// 通过命令行参数接收用户的 prompt
+	prompt := flag.String("prompt", "", "要交给 Agent 执行的任务描述")
+	flag.Parse()
 
-	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
+	log.Printf("\n>>> 🚀 收到指令: %s\n", *prompt)
+	
+	sess.Append(schema.Message{Role: schema.RoleUser, Content: *prompt})
 
 	err := eng.Run(context.Background(), sess, reporter)
 	if err != nil {
