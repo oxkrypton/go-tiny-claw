@@ -19,13 +19,20 @@ type AgentEngine struct {
 	provider provider.LLMProvider
 	registry tools.Registry
 	// 动态加载sysprompt/skill
-	composer ctxpkg.PromptComposer
+	composer *ctxpkg.PromptComposer
+	// 压缩器实例
+	compactor *ctxpkg.Compactor
 }
 
 func NewAgentEngine(p provider.LLMProvider, r tools.Registry) *AgentEngine {
 	return &AgentEngine{
 		provider: p,
 		registry: r,
+		// (假装这里能获取到 WorkDir 初始化 Composer，生产环境中应在 Run 中动态构造)
+		composer: ctxpkg.NewPromptComposer("testdata"),
+		//【初始化压缩器】：为了便于今天的极端测试，我们将水位线阈值设积极（例如 3000 字符），
+		// 并保护最近的 6 条消息（大约两轮 Turn 的交互）
+		compactor: ctxpkg.NewCompactor(3000, 6),
 	}
 }
 
@@ -44,13 +51,16 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
 
-		// 1. 【上下文组装】: System Prompt + 截取最近的 6 条消息作为 Working Memory //
-		//  在实际业务中，由于工具返回结果可能很长，短期工作记忆往往设为 6-10 条足以维系连贯对话
+		// 1.【上下文组装】: System Prompt + 截取最近的 6 条消息作为 Working Memory
+		// 从 Session 提取出近期的 Working Memory (例如最近 20 条，给压缩器留下充足的判断空间)
 		workingMemory := session.GetWorkingMemory(6)
 
 		var contextHistory []schema.Message
 		contextHistory = append(contextHistory, systemMsg)
 		contextHistory = append(contextHistory, workingMemory...)
+
+		// 2. 【核心注入点】: 在向 Provider 发起推理前，过一遍内存压缩器
+		compactedContext := e.compactor.Compact(contextHistory)
 
 		turnCount++
 		// 将当前轮次的完整 context 写入 session.json，方便调试
@@ -66,8 +76,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		// 将大模型的行动响应持久化到 Session 中
 		session.Append(*actionResp)
 		//将模型的响应完整追加到上下文历史中
-		contextHistory = append(contextHistory, *actionResp)
-
+		compactedContext = append(compactedContext, *actionResp)
 
 		//如果模型回复了纯文本，打印出来 (通常是思考过程或最终结果)
 		if actionResp.Content != "" && reporter != nil {
@@ -108,7 +117,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 			}
 			contextHistory = append(contextHistory, observationMsgs[i])
 		}
-		
+
 		// 持久化：将工具执行结果写回 Session，确保下一轮 GetWorkingMemory 能读到新数据
 		session.Append(observationMsgs...)
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
