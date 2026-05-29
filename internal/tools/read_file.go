@@ -66,7 +66,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	var input readFileArgs
 	if err := json.Unmarshal(args, &input); err != nil {
 		// 返回 error 会被 Registry 捕获并传给大模型，模型会知道自己 JSON 格式写错了
-		return "", fmt.Errorf("参数解析失败: %w", err)
+		return "", schema.NewToolError(schema.ErrInvalidArguments, "参数解析失败", err)
 	}
 
 	// 2. 拼接绝对路径 (注意：生产环境中需要做路径穿越检测防范，防止 ../../etc/passwd)
@@ -75,6 +75,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	// 3. 执行物理 IO 操作
 	file, err := os.Open(fullPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", schema.NewToolError(schema.ErrFileNotFound, "文件不存在，请确认路径是否正确", err)
+		}
+		if os.IsPermission(err) {
+			return "", schema.NewToolError(schema.ErrPermissionDenied, "没有权限读取该文件", err)
+		}
 		return "", fmt.Errorf("打开文件失败: %w", err)
 	}
 	defer file.Close()
@@ -105,7 +111,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		end = len(lines)
 	}
 	if start > end {
-		return "", fmt.Errorf("start_line(%d) 不能大于 end_line(%d)", start, end)
+		return "", schema.NewToolError(schema.ErrInvalidArguments,
+			fmt.Sprintf("start_line(%d) 不能大于 end_line(%d)", start, end), nil)
 	}
 
 	//切片取行 (行号从 1 开始, slice 索引从 0 开始)

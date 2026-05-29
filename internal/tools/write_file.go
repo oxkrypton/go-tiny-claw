@@ -51,7 +51,7 @@ type writeFileArgs struct {
 func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var input writeFileArgs
 	if err := json.Unmarshal(args, &input); err != nil {
-		return "", fmt.Errorf("参数解析失败: %w", err)
+		return "", schema.NewToolError(schema.ErrInvalidArguments, "参数解析失败", err)
 	}
 
 	// 【安全防线】：限制在 WorkDir 下执行，防止大模型修改系统级文件
@@ -59,12 +59,21 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 	//自动创建缺失的父级目录
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		if os.IsPermission(err) {
+			return "", schema.NewToolError(schema.ErrPermissionDenied, "创建父级目录失败", err)
+		}
 		return "", fmt.Errorf("创建父级目录失败: %w", err)
 	}
 
 	//写入文件内容, 权限设置为 0644
 	err := os.WriteFile(fullPath, []byte(input.Content), 0644)
 	if err != nil {
+		if os.IsPermission(err) {
+			return "", schema.NewToolError(schema.ErrPermissionDenied, "写入文件失败", err)
+		}
+		if os.IsNotExist(err) {
+			return "", schema.NewToolError(schema.ErrFileNotFound, "目标路径不存在", err)
+		}
 		return "", fmt.Errorf("写入文件失败: %w", err)
 	}
 

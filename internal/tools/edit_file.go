@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func (t *EditFileTool) Definition() schema.ToolDefinition {
 func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var input editFileArgs
 	if err := json.Unmarshal(args, &input); err != nil {
-		return "", fmt.Errorf("参数解析失败 %w", err)
+		return "", schema.NewToolError(schema.ErrInvalidArguments, "参数解析失败", err)
 	}
 
 	fullPath := filepath.Join(t.workDir, input.Path)
@@ -59,20 +60,33 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	//1. 读取原文件内容
 	contentBytes, err := os.ReadFile(fullPath)
 	if err != nil {
-		return "", fmt.Errorf("读取文件失败, 请确认路径是否正确: %w", err)
+		if os.IsNotExist(err) {
+			return "", schema.NewToolError(schema.ErrFileNotFound, "文件不存在，请确认路径是否正确", err)
+		}
+		if os.IsPermission(err) {
+			return "", schema.NewToolError(schema.ErrPermissionDenied, "没有权限读取该文件", err)
+		}
+		return "", fmt.Errorf("读取文件失败: %w", err)
 	}
 	originalContent := string(contentBytes)
 
 	//2. 调用精确匹配替换算法
 	newContent, err := Replace(originalContent, input.OldText, input.NewText)
 	if err != nil {
-		// 【驾驭哲学】将具体的报错原因 (如匹配到多处) 原样返回，让大模型自行纠正
-		return fmt.Sprintf("执行报错: %v\n", err), nil
+		// ToolError 直接向上透传给 registry/recovery 处理；非 ToolError 兜底为普通 error
+		var toolErr *schema.ToolError
+		if errors.As(err, &toolErr) {
+			return "", err
+		}
+		return "", fmt.Errorf("替换失败: %w", err)
 	}
 
 	//3. 将新内容安全地写回磁盘
 	if err := os.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
-		return "", fmt.Errorf("写回文件失败 %w", err)
+		if os.IsPermission(err) {
+			return "", schema.NewToolError(schema.ErrPermissionDenied, "写回文件失败", err)
+		}
+		return "", fmt.Errorf("写回文件失败: %w", err)
 	}
 
 	return fmt.Sprintf("✅ 成功修改文件: %s", input.Path), nil
@@ -94,7 +108,8 @@ func Replace(originalContent, oldText, newText string) (string, error) {
 	}
 	//匹配到多处
 	if count > 1 {
-		return "", fmt.Errorf("old_text 匹配到了 %d 处, 请提供更多的上下文代码以确保唯一性", count)
+		return "", schema.NewToolError(schema.ErrOldTextAmbiguous,
+			fmt.Sprintf("old_text 匹配到了 %d 处，请提供更多的上下文代码以确保唯一性", count), nil)
 	}
 
 	//L2:换行符归一化 (统一将 \r\n 转换为 \n)
@@ -107,11 +122,13 @@ func Replace(originalContent, oldText, newText string) (string, error) {
 	}
 	// L2 之后
 	if count > 1 {
-		return "", fmt.Errorf("old_text 匹配到了 %d 处, 请提供更多的上下文代码以确保唯一性", count)
+		return "", schema.NewToolError(schema.ErrOldTextAmbiguous,
+			fmt.Sprintf("old_text 匹配到了 %d 处，请提供更多的上下文代码以确保唯一性", count), nil)
 	}
 
 	// count == 0，L1 和 L2 都找不到
-	return "", fmt.Errorf("在文件中未找到 old_text 指定的内容, 请用 read_file 重新查看文件后再试")
+	return "", schema.NewToolError(schema.ErrOldTextNotFound,
+		"在文件中未找到 old_text 指定的内容，请用 read_file 重新查看文件后再试", nil)
 }
 
 // LockHints 声明 edit_file 对目标 path 取独占写锁。
