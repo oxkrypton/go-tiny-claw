@@ -16,23 +16,20 @@ import (
 
 // AgentEngine 是微型 OS 的核心驱动
 type AgentEngine struct {
-	provider provider.LLMProvider
-	registry tools.Registry
-	// 暴露给外部的计划模式开关
-	PlanMode bool
-	// 压缩器实例
-	compactor *ctxpkg.Compactor
-	// 动态加载sysprompt/skill
-	//composer *ctxpkg.PromptComposer
+	provider  provider.LLMProvider
+	registry  tools.Registry
+	PlanMode  bool                    // 暴露给外部的计划模式开关
+	compactor *ctxpkg.Compactor       // 压缩器实例
+	recover   *ctxpkg.RecoveryManager // 自愈管理
 }
 
 func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *AgentEngine {
 	return &AgentEngine{
-		provider: p,
-		registry: r,
-		PlanMode: planMode,
-		// 初始化压缩器: 并保护最近的 6 条消息（大约两轮 Turn 的交互）
+		provider:  p,
+		registry:  r,
+		PlanMode:  planMode,
 		compactor: ctxpkg.NewCompactor(20000, 6),
+		recover:   ctxpkg.NewRecoveryManager(),
 	}
 }
 
@@ -94,10 +91,9 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 
 		// 4. 执行行动 (Action) 与 获取观察结果 (Observation)
 		// 并行调度与路径锁的细节都收敛在 registry.ExecuteParallel 内：
-		//   - 同路径串行（写独占、读共享），跨路径并行
-		//   - bash 等无法静态分析路径的工具会拿全局写锁，期间挡住所有文件类工具
+		// - 同路径串行（写独占、读共享），跨路径并行
+		// - bash 等无法静态分析路径的工具会拿全局写锁，期间挡住所有文件类工具
 		// engine 这里只负责把结果按原顺序拼回 contextHistory。
-
 		results := e.registry.ExecuteParallel(ctx, actionResp.ToolCalls, reporter)
 
 		observationMsgs := make([]schema.Message, len(results))

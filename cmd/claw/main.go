@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log"
 	"os"
 
@@ -16,6 +15,7 @@ import (
 func main() {
 	//获取工作区
 	workDir, _ := os.Getwd()
+	workDir+="/testdata"
 
 	// 1. 初始化真实的 Provider大脑
 	// 这里你可以任意切换 NewClaudeProvider 或 NewOpenAIProvider，效果完全一致！
@@ -31,7 +31,7 @@ func main() {
 	registry.Register(tools.NewEditFileTool(workDir))
 
 	// 4. 实例化并运行引擎
-	eng := engine.NewAgentEngine(llmProvider, registry, true)
+	eng := engine.NewAgentEngine(llmProvider, registry, false)
 
 	//便于测试的终端输出器
 	reporter := engine.NewTerminalReporter()
@@ -40,12 +40,23 @@ func main() {
 	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
 
 	// 通过命令行参数接收用户的 prompt
-	prompt := flag.String("prompt", "", "要交给 Agent 执行的任务描述")
-	flag.Parse()
+	prompt := `
+我当前目录下有一个 auth.go 文件。
+请修改 auth.go 中的 login 函数。 
+请直接使用 edit_file 工具替换下面的代码块，将判断条件改为同时允许"admin"、"root"和"guest"三种用户登录： 
+// 鉴权入口函数 
+func login(user string) bool {
+	// 检查用户名 
+	if user == "admin" {
+		return true 
+	} 
+	return false 
+}
+	`
 
-	log.Printf("\n>>> 🚀 收到指令: %s\n", *prompt)
+	log.Printf("\n>>> 🚀 收到指令: %s\n", prompt)
 	
-	sess.Append(schema.Message{Role: schema.RoleUser, Content: *prompt})
+	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
 
 	err := eng.Run(context.Background(), sess, reporter)
 	if err != nil {

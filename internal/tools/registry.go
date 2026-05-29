@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync"
 
+	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
@@ -59,12 +60,14 @@ type registryImpl struct {
 	//使用 map 以工具的 name 作为 key 进行快速 O(1) 路由查找
 	tools   map[string]BaseTool
 	lockMgr *PathLockManager
+	recover *ctxpkg.RecoveryManager // 自愈管理
 }
 
 func NewRegistry() Registry {
 	return &registryImpl{
 		tools:   make(map[string]BaseTool),
 		lockMgr: NewPathLockManager(),
+		recover: ctxpkg.NewRecoveryManager(),
 	}
 }
 
@@ -98,9 +101,10 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 
 	output, err := tool.Execute(ctx, call.Arguments)
 	if err != nil {
+		rawOutput := fmt.Sprintf("执行工具 %s 失败: %v", call.Name, err)
 		return schema.ToolResult{
 			ToolCallID: call.ID,
-			Output:     fmt.Sprintf("Error executing %s: %v", call.Name, err),
+			Output:     r.recover.AnalyzeAndInject(call.Name, rawOutput),
 			IsError:    true,
 		}
 	}
