@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -101,10 +102,15 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 
 	output, err := tool.Execute(ctx, call.Arguments)
 	if err != nil {
+		var code schema.ErrorCode
+		var toolErr *schema.ToolError
+		if errors.As(err, &toolErr) {
+			code = toolErr.Code
+		}
 		rawOutput := fmt.Sprintf("执行工具 %s 失败: %v", call.Name, err)
 		return schema.ToolResult{
 			ToolCallID: call.ID,
-			Output:     r.recover.AnalyzeAndInject(call.Name, rawOutput),
+			Output:     r.recover.AnalyzeAndInject(call.Name, rawOutput, code),
 			IsError:    true,
 		}
 	}

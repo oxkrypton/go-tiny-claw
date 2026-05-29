@@ -46,7 +46,7 @@ type bashArgs struct {
 func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var input bashArgs
 	if err := json.Unmarshal(args, &input); err != nil {
-		return "", fmt.Errorf("参数解析失败: %w", err)
+		return "", schema.NewToolError(schema.ErrInvalidArguments, "参数解析失败", err)
 	}
 
 	// 【驾驭底线 1】：Time Budgeting (时间预算与超时控制) /
@@ -65,9 +65,10 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	out, err := cmd.CombinedOutput()
 	outputStr := string(out)
 
-	// 如果命令执行超时, 返回警告信息让模型知晓
+	// 如果命令执行超时, 返回 ToolError 让 RecoveryManager 指导模型恢复
 	if timeoutCtx.Err() == context.DeadlineExceeded {
-		return outputStr + "\n[警告: 命令执行超时(30s)，已被系统强制终止。如果是启动常驻服务，请尝试将其转入后台。]", nil
+		return "", schema.NewToolError(schema.ErrCommandTimeout,
+			outputStr+"\n[警告: 命令执行超时(30s)，已被系统强制终止。如果是启动常驻服务，请尝试将其转入后台。]", nil)
 	}
 
 	// 【驾驭底线 3】：错误原样回传 (Self-Correction 自愈机制)

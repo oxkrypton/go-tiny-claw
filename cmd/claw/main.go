@@ -15,7 +15,7 @@ import (
 func main() {
 	//获取工作区
 	workDir, _ := os.Getwd()
-	workDir+="/testdata"
+	workDir += "/testdata"
 
 	// 1. 初始化真实的 Provider大脑
 	// 这里你可以任意切换 NewClaudeProvider 或 NewOpenAIProvider，效果完全一致！
@@ -55,7 +55,7 @@ func login(user string) bool {
 	`
 
 	log.Printf("\n>>> 🚀 收到指令: %s\n", prompt)
-	
+
 	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
 
 	err := eng.Run(context.Background(), sess, reporter)
