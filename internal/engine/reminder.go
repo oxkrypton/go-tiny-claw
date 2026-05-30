@@ -3,8 +3,11 @@ package engine
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
@@ -22,12 +25,52 @@ func NewReminderInjector() *ReminderInjector {
 	}
 }
 
-// generateFingerprint 生成工具调用的唯一指纹，用于判断大模型是否在重复相同的动作
+// generateFingerprint 生成工具调用的归一化指纹。
+// 对参数做 whitespace trim 和路径规范化，使等价调用产生相同的哈希，
+// 防止模型通过细微差异（多余空格、相对路径写法）绕过死循环检测。
 func generateFingerprint(toolName string, args []byte) string {
+	normalized := canonicalizeArgs(toolName, args)
 	hasher := md5.New()
 	hasher.Write([]byte(toolName))
-	hasher.Write(args)
+	hasher.Write(normalized)
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// canonicalizeArgs 将模型传入的 JSON 参数归一到规范形式：
+// - 所有 string 值 trim 首尾空格
+// - 路径字段经过 filepath.Clean
+// - 重新序列化保证 JSON key 顺序一致
+func canonicalizeArgs(toolName string, raw json.RawMessage) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	for k, v := range m {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		s = strings.TrimSpace(s)
+		if isPathField(toolName, k) {
+			s = filepath.Clean(s)
+		}
+		m[k] = s
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// isPathField 判断指定字段是否为文件路径，需做路径规范化。
+func isPathField(toolName, key string) bool {
+	switch toolName {
+	case "read_file", "write_file", "edit_file":
+		return key == "path"
+	default:
+		return false
+	}
 }
 
 // CheckAndInject 分析本轮的执行结果，决定是否要在 Context 尾部追加 Reminder
