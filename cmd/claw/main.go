@@ -40,21 +40,10 @@ func main() {
 	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
 
 	// 通过命令行参数接收用户的 prompt
-	prompt := `
-我当前目录下有一个 auth.go 文件。
-请修改 auth.go 中的 login 函数。 
-请直接使用 edit_file 工具替换下面的代码块，将判断条件改为同时允许"admin"、"root"和"guest"三种用户登录： 
-// 鉴权入口函数 
-func login(user string) bool {
-	// 检查用户名 
-	if user == "admin" {
-		return true 
-	} 
-	return false 
-}
-	`
-
-	log.Printf("\n>>> 🚀 收到指令: %s\n", prompt)
+	prompt := ` 
+帮我读取当前目录下的 secret_key.txt。 
+注意：我们的文件系统现在非常不稳定，经常报 File Not Found。 
+如果报错了，请你【千万不要改变参数】，直接原样再次调用 read_file 尝试，直到成功或连续重试 5 次为止。 `
 
 	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
 

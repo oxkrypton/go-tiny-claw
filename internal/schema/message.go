@@ -32,8 +32,9 @@ type ToolCall struct {
 // ToolResult 代表工具在本地执行完毕后返回的物理结果
 type ToolResult struct {
 	ToolCallID string `json:"tool_call_id"`
-	Output     string `json:"output"`   //工具执行的控制台输出或报错堆栈
-	IsError    bool   `json:"is_error"` //标记是否失败，供后续程序自行纠错
+	Output     string    `json:"output"`                //工具执行的控制台输出或报错堆栈
+	ErrorCode  ErrorCode `json:"error_code,omitempty"`  //稳定错误分类码，供 engine 层增强用
+	IsError    bool      `json:"is_error"`              //标记是否失败，供后续程序自行纠错
 }
 
 // ToolDefinition 描述了一个大模型可以调用的工具元信息 (供模型理解工具有什么用)

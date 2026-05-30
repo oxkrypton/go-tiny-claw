@@ -20,7 +20,8 @@ type AgentEngine struct {
 	registry  tools.Registry
 	PlanMode  bool                    // 暴露给外部的计划模式开关
 	compactor *ctxpkg.Compactor       // 压缩器实例
-	recover   *ctxpkg.RecoveryManager // 自愈管理
+	recovery  *ctxpkg.RecoveryManager // 错误增强
+	injector  *ReminderInjector       //提醒注入器
 }
 
 func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *AgentEngine {
@@ -29,7 +30,8 @@ func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *Ag
 		registry:  r,
 		PlanMode:  planMode,
 		compactor: ctxpkg.NewCompactor(20000, 6),
-		recover:   ctxpkg.NewRecoveryManager(),
+		recovery:  ctxpkg.NewRecoveryManager(),
+		injector:  NewReminderInjector(),
 	}
 }
 
@@ -93,18 +95,29 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		// 并行调度与路径锁的细节都收敛在 registry.ExecuteParallel 内：
 		// - 同路径串行（写独占、读共享），跨路径并行
 		// - bash 等无法静态分析路径的工具会拿全局写锁，期间挡住所有文件类工具
-		// engine 这里只负责把结果按原顺序拼回 contextHistory。
-		results := e.registry.ExecuteParallel(ctx, actionResp.ToolCalls, reporter)
+		rawResults := e.registry.ExecuteParallel(ctx, actionResp.ToolCalls, reporter)
 
-		observationMsgs := make([]schema.Message, len(results))
-		for i, result := range results {
+		// 5. 后处理增强 (Error Recovery + Reminder Injection)
+		// 必须在所有工具结果 append 完之后才能追加 reminder，否则会破坏工具调用协议的消息顺序。
+		observationMsgs := make([]schema.Message, len(rawResults))
+		var reminderMsg *schema.Message
+
+		for i, result := range rawResults {
 			call := actionResp.ToolCalls[i]
+
+			// 错误增强：用 RecoveryManager 改写 Output，注入可操作的恢复建议
 			if result.IsError {
+				result.Output = e.recovery.AnalyzeAndInject(call.Name, result.Output, result.ErrorCode)
 				log.Printf(" -> [Go-%d] ❌ %s: %s\n", i, call.Name, result.Output)
 			} else {
 				log.Printf(" -> [Go-%d] ✅ %s (返回 %d 字节)\n", i, call.Name, len(result.Output))
 			}
-			// ToolCallID 必须携带，是维系大模型推理链条的关键
+
+			// 死循环探测：只收集，不立刻写入 Session
+			if nudge := e.injector.CheckAndInject(call, result); nudge != nil && reminderMsg == nil {
+				reminderMsg = nudge
+			}
+
 			observationMsgs[i] = schema.Message{
 				Role:       schema.RoleUser,
 				Content:    result.Output,
@@ -113,8 +126,13 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 			contextHistory = append(contextHistory, observationMsgs[i])
 		}
 
-		// 持久化：将工具执行结果写回 Session，确保下一轮 GetWorkingMemory 能读到新数据
+		// 持久化：先写入全部工具结果，保持协议要求的顺序
 		session.Append(observationMsgs...)
+
+		// 再追加 reminder（最多一条），放在最末尾以获得最高的近因效应权重
+		if reminderMsg != nil {
+			session.Append(*reminderMsg)
+		}
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
 	}
 
