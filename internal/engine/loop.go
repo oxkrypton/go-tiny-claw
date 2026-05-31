@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
@@ -155,9 +154,7 @@ func (e *AgentEngine) dumpSession(turn int, session *Session, history []schema.M
 		return
 	}
 
-	sessionPath := filepath.Join(session.WorkDir, "testdata", "session.json")
-	// 确保 testdata 目录存在
-	os.MkdirAll(filepath.Dir(sessionPath), 0755)
+	sessionPath := "session.json"
 	if err := os.WriteFile(sessionPath, jsonBytes, 0644); err != nil {
 		log.Printf("[Session] 写入 session.json 失败: %v", err)
 		return
