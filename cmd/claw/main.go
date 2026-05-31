@@ -5,8 +5,10 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/feishu"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
@@ -33,28 +35,34 @@ func main() {
 	// 4. 实例化并运行引擎
 	eng := engine.NewAgentEngine(llmProvider, registry, false)
 
-	//便于测试的终端输出器
-	reporter := engine.NewTerminalReporter()
-
-	sessionID := "test_oom_protection_001"
+	sessionID := "test_001"
 	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
-
-	// 通过命令行参数接收用户的 prompt
-	prompt := ` 
-帮我读取当前目录下的 secret_key.txt。 
-注意：我们的文件系统现在非常不稳定，经常报 File Not Found。 
-如果报错了，请你【千万不要改变参数】，直接原样再次调用 read_file 尝试，直到成功或连续重试 5 次为止。 `
-
-	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
-
-	err := eng.Run(context.Background(), sess, reporter)
-	if err != nil {
-		log.Fatal("fail to start engine: %v", err)
-	}
+	sess.Append(schema.Message{Role: schema.RoleUser, Content: ""})
 
 	// 5. 通过 WebSocket 长连接启动飞书 Bot（阻塞）
-	// log.Println("go-tiny-claw 飞书长连接模式启动中...")
-	// if err := feishu.NewFeishuBot(eng).Start(context.Background()); err != nil {
-	// 	log.Fatalf("飞书长连接启动失败: %v", err)
-	// }
+	log.Println("go-tiny-claw 飞书长连接模式启动中...")
+	bot := feishu.NewFeishuBot(eng, *sess)
+
+	registry.Use(func(ctx context.Context, call schema.ToolCall) (bool, string) {
+		argsStr := string(call.Arguments)
+
+		// 检查是否命中高危特征库
+		if !feishu.IsDangerousCommand(call.Name, argsStr) {
+			return true, ""
+		}
+
+		taskID := call.ID// 使用大模型生成的唯一 ToolCallID 作为 TaskID
+
+		return feishu.GlovalApprovalMgr.WaitForApproval(
+			taskID,
+			call.Name,
+			argsStr,
+			bot.Reporter(),
+			5*time.Minute,
+		)
+	})
+
+	if err := bot.Start(context.Background()); err != nil {
+		log.Fatalf("飞书长连接启动失败: %v", err)
+	}
 }

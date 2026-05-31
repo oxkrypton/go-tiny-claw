@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -21,9 +22,11 @@ type FeishuBot struct {
 	appID     string
 	appSecret string
 	engine    *engine.AgentEngine // 持有核心引擎引用
+	sess      engine.Session
+	r         *FeishuReporter
 }
 
-func NewFeishuBot(eng *engine.AgentEngine) *FeishuBot {
+func NewFeishuBot(eng *engine.AgentEngine, sess engine.Session) *FeishuBot {
 	appID := os.Getenv("FEISHU_APP_ID")
 	appSecret := os.Getenv("FEISHU_APP_SECRET")
 
@@ -39,6 +42,7 @@ func NewFeishuBot(eng *engine.AgentEngine) *FeishuBot {
 		appID:     appID,
 		appSecret: appSecret,
 		engine:    eng,
+		sess:      sess,
 	}
 }
 
@@ -55,6 +59,24 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 			chatId := *event.Event.Message.ChatId
 			log.Printf("[Feishu] 收到会话 %s 信息: %s \n", chatId, contentStr)
 
+			// 拦截人工审批的特殊口令
+			if strings.HasPrefix(contentStr, "approve ") {
+				taskID := strings.TrimPrefix(contentStr, "approve")
+				taskID = strings.TrimSpace(taskID)
+				// 唤醒挂起的引擎协程
+				GlovalApprovalMgr.ResolveApproval(taskID, true, "管理员已批准该操作")
+				log.Printf("[Feishu] 会话 %s: ✅ 已为您批准任务 %s", chatId, taskID)
+				return nil
+			}
+			if strings.HasPrefix(contentStr, "reject ") {
+				taskID := strings.TrimPrefix(contentStr, "reject")
+				taskID = strings.TrimSpace(taskID)
+				// 唤醒挂起的引擎协程, 并反馈拒绝理由
+				GlovalApprovalMgr.ResolveApproval(taskID, false, "管理员已拒绝该操作")
+				log.Printf("[Feishu] 会话 %s: 🚫 已拒绝任务 %s", chatId, taskID)
+				return nil
+			}
+
 			// 长连接同样要求 3 秒内完成处理，否则会重推，因此必须异步
 			go b.handleAgentRun(chatId, contentStr)
 
@@ -65,6 +87,11 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 	return cli.Start(ctx)
 }
 
+// 返回FeishuBot绑定的Reporter
+func (b *FeishuBot) Reporter() *FeishuReporter {
+	return b.r
+}
+
 // handleAgentRun 是连接飞书与底层引擎的桥梁
 func (b *FeishuBot) handleAgentRun(chatId string, prompt string) {
 	// 为当前聊天窗口实例化一个专属的 Reporter
@@ -73,8 +100,11 @@ func (b *FeishuBot) handleAgentRun(chatId string, prompt string) {
 		chatId: chatId,
 	}
 
+	b.r = reporter
+	b.sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
+
 	// 启动引擎
-	err := b.engine.Run(context.Background(), nil,reporter)
+	err := b.engine.Run(context.Background(), &b.sess, reporter)
 	if err != nil {
 		reporter.sendMsg(fmt.Sprintf("❌ Agent 运行崩溃: %v", err))
 
