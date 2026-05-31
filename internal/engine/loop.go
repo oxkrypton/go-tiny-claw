@@ -57,12 +57,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		contextHistory = append(contextHistory, systemMsg)
 		contextHistory = append(contextHistory, workingMemory...)
 
-		// 2. 【核心注入点】: 在向 Provider 发起推理前，过一遍内存压缩器
-		compactedContext := e.compactor.Compact(contextHistory)
-
 		turnCount++
-		// 将当前轮次的完整 context 写入 session.json，方便调试
-		e.dumpSession(turnCount, session, contextHistory)
 
 		// ================= Action =================
 		// 每一轮都直接注入工具，让模型在同一次响应中决定回复文本或发起工具调用。
@@ -71,10 +66,9 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 			return fmt.Errorf("Action 阶段生成失败: %w", err)
 		}
 
-		// 将大模型的行动响应持久化到 Session 中
+		// 将大模型的行动响应持久化到 Session 和 contextHistory 中
 		session.Append(*actionResp)
-		//将模型的响应完整追加到上下文历史中
-		compactedContext = append(compactedContext, *actionResp)
+		contextHistory = append(contextHistory, *actionResp)
 
 		//如果模型回复了纯文本，打印出来 (通常是思考过程或最终结果)
 		if actionResp.Content != "" && reporter != nil {
@@ -132,7 +126,11 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 		// 再追加 reminder（最多一条），放在最末尾以获得最高的近因效应权重
 		if reminderMsg != nil {
 			session.Append(*reminderMsg)
+			contextHistory = append(contextHistory, *reminderMsg)
 		}
+
+		// 将本轮完整 context（含 assistant(tool_calls) + tool_results + reminder）写入 session.json
+		e.dumpSession(turnCount, session, contextHistory)
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
 	}
 
