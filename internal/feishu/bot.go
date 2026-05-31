@@ -13,6 +13,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
@@ -59,28 +60,29 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 			chatId := *event.Event.Message.ChatId
 			log.Printf("[Feishu] 收到会话 %s 信息: %s \n", chatId, contentStr)
 
-			// 拦截人工审批的特殊口令
-			if strings.HasPrefix(contentStr, "approve ") {
-				taskID := strings.TrimPrefix(contentStr, "approve")
-				taskID = strings.TrimSpace(taskID)
-				// 唤醒挂起的引擎协程
-				GlovalApprovalMgr.ResolveApproval(taskID, true, "管理员已批准该操作")
-				log.Printf("[Feishu] 会话 %s: ✅ 已为您批准任务 %s", chatId, taskID)
-				return nil
-			}
-			if strings.HasPrefix(contentStr, "reject ") {
-				taskID := strings.TrimPrefix(contentStr, "reject")
-				taskID = strings.TrimSpace(taskID)
-				// 唤醒挂起的引擎协程, 并反馈拒绝理由
-				GlovalApprovalMgr.ResolveApproval(taskID, false, "管理员已拒绝该操作")
-				log.Printf("[Feishu] 会话 %s: 🚫 已拒绝任务 %s", chatId, taskID)
-				return nil
-			}
-
 			// 长连接同样要求 3 秒内完成处理，否则会重推，因此必须异步
 			go b.handleAgentRun(chatId, contentStr)
 
 			return nil
+		}).
+		OnP2CardActionTrigger(func(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+			action := event.Event.Action
+			taskID, _ := action.Value["taskID"].(string)
+			act, _ := action.Value["action"].(string)
+
+			switch act {
+			case "approve":
+				GlovalApprovalMgr.ResolveApproval(taskID, true, "管理员已批准")
+			case "reject":
+				GlovalApprovalMgr.ResolveApproval(taskID, false, "管理员已拒绝")
+			}
+
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "success",
+					Content: fmt.Sprintf("已%s该操作", map[string]string{"approve": "批准", "reject": "拒绝"}[act]),
+				},
+			}, nil
 		})
 
 	cli := larkws.NewClient(b.appID, b.appSecret, larkws.WithEventHandler(handler))
@@ -119,9 +121,8 @@ type FeishuReporter struct {
 	chatId string
 }
 
-// sendMsg 封装了调用飞书 OpenAPI 发送卡片/文本的操作
+// sendMsg 封装了调用飞书 OpenAPI 发送文本消息的操作
 func (r *FeishuReporter) sendMsg(text string) {
-	// 构建文本信息内容
 	textCotent := map[string]string{
 		"text": text,
 	}
@@ -134,6 +135,20 @@ func (r *FeishuReporter) sendMsg(text string) {
 			ReceiveId(r.chatId).
 			MsgType(larkim.MsgTypeText).
 			Content(contentStr).
+			Build()).
+		Build()
+
+	_, _ = r.client.Im.Message.Create(context.Background(), msgReq)
+}
+
+// sendCard 发送飞书交互卡片消息（审批按钮等）。
+func (r *FeishuReporter) sendCard(cardJSON string) {
+	msgReq := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(r.chatId).
+			MsgType("interactive").
+			Content(cardJSON).
 			Build()).
 		Build()
 
