@@ -111,18 +111,6 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 		}
 	}
 
-	for _, mw := range r.middlewares {
-		allowed, reason := mw(ctx, call)
-		if !allowed {
-			log.Printf("[Registry] ⚠️ 工具 %s 被 Middleware 拦截: %s\n", call.Name, reason)
-			return schema.ToolResult{
-				ToolCallID: call.ID,
-				Output:     fmt.Sprintf("执行被系统拦截。原因: %s", reason),
-				IsError:    true,
-			}
-		}
-	}
-
 	output, err := tool.Execute(ctx, call.Arguments)
 	if err != nil {
 		var code schema.ErrorCode
@@ -181,8 +169,23 @@ func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolC
 
 // runWithLocks 处理单个工具调用的锁获取 → 执行 → 释放。
 func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, out *schema.ToolResult) {
-	tool := r.tools[call.Name] // 可能为 nil，由 execute 统一处理"工具不存在"
+	tool := r.tools[call.Name]
 
+	// 先走 middleware 审批链，审批通过后再拿锁，避免阻塞期间占住全局锁。
+	for _, mw := range r.middlewares {
+		allowed, reason := mw(ctx, call)
+		if !allowed {
+			log.Printf("[Registry] ⚠️ 工具 %s 被 Middleware 拦截: %s\n", call.Name, reason)
+			*out = schema.ToolResult{
+				ToolCallID: call.ID,
+				Output:     fmt.Sprintf("执行被系统拦截。原因: %s", reason),
+				IsError:    true,
+			}
+			return
+		}
+	}
+
+	// tool == nil 表示工具不存在，由 execute 统一处理
 	hinter, ok := tool.(LockHinter)
 	if !ok {
 		// 当其他协程 RLock() 时, 阻塞 bash 操作,
