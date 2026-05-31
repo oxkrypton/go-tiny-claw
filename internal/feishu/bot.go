@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
@@ -25,6 +26,8 @@ type FeishuBot struct {
 	engine    *engine.AgentEngine // 持有核心引擎引用
 	sess      engine.Session
 	r         *FeishuReporter
+	running   map[string]bool // chatId → 是否正在执行 Agent 任务
+	runMu     sync.Mutex
 }
 
 func NewFeishuBot(eng *engine.AgentEngine, sess engine.Session) *FeishuBot {
@@ -44,6 +47,7 @@ func NewFeishuBot(eng *engine.AgentEngine, sess engine.Session) *FeishuBot {
 		appSecret: appSecret,
 		engine:    eng,
 		sess:      sess,
+		running:   make(map[string]bool),
 	}
 }
 
@@ -60,8 +64,27 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 			chatId := *event.Event.Message.ChatId
 			log.Printf("[Feishu] 收到会话 %s 信息: %s \n", chatId, contentStr)
 
+			// 并发守卫：同一会话只能有一个 Agent 任务在执行，
+			// 否则新消息会插入到 assistant(tool_calls) 和 tool_result 之间，破坏 LLM 协议。
+			b.runMu.Lock()
+			if b.running[chatId] {
+				b.runMu.Unlock()
+				tmp := &FeishuReporter{client: b.client, chatId: chatId}
+				tmp.sendMsg("⏳ 当前任务还在执行中，请稍后再发送指令...")
+				return nil
+			}
+			b.running[chatId] = true
+			b.runMu.Unlock()
+
 			// 长连接同样要求 3 秒内完成处理，否则会重推，因此必须异步
-			go b.handleAgentRun(chatId, contentStr)
+			go func() {
+				defer func() {
+					b.runMu.Lock()
+					delete(b.running, chatId)
+					b.runMu.Unlock()
+				}()
+				b.handleAgentRun(chatId, contentStr)
+			}()
 
 			return nil
 		}).
