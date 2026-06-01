@@ -136,6 +136,102 @@ func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Report
 	return nil
 }
 
+// RunSub 是专为 Subagent 拉起的一次性受限循环。不依赖外部 Session，执行完就结束。
+func (e *AgentEngine) RunSub(ctx context.Context, taskPrompt string, readOnlyRegistry tools.Registry, reporter any) (string, error) {
+	// 可视化：将透传进来的 reporter 断言为 Reporter 接口，
+	// 后续打上 [Subagent] 标记让终端用户看到 Subagent 正在干嘛
+	var r Reporter
+	if reporter != nil {
+		var ok bool
+		r, ok = reporter.(Reporter)
+		if !ok {
+			log.Printf("[Subagent] 警告：reporter 类型断言失败，跳过可视化输出")
+		}
+	}
+
+	contextHistory := []schema.Message{
+		{
+			Role: schema.RoleSystem,
+			Content: `你是一个专门负责深度探索的探路者 (Explorer Subagent)。
+你的任务是根据主架构师的指令，在当前工作区内仔细阅读代码、查阅日志，搜集足够的信息。
+
+【核心纪律】
+1. 你必须、且只能依靠内置工具（如 bash 的 find/grep，或 read_file）去寻找答案。绝对不允许凭空捏造或猜测！
+2. 如果你没有找到确切的答案，你必须继续使用工具深入搜索。
+3. 当且仅当你找到了确切的线索后，停止调用工具，直接输出一段纯文本作为你的终极汇报。主Agent会根据你的汇报来做下一步决策。`,
+		},
+		{
+			Role:    schema.RoleUser,
+			Content: taskPrompt,
+		},
+	}
+
+	const maxSubTurns = 10
+	turnCount := 0
+
+	for {
+		turnCount++
+		if turnCount > maxSubTurns {
+			return "", fmt.Errorf("Subagent探索过于深入，超过 %d 轮被强制召回，请主 Agent 给它更明确的指令", maxSubTurns)
+		}
+
+		// Subagent 仅能获取传入的只读工具注册表
+		availableTools := readOnlyRegistry.GetAvailableTools()
+
+		actionResp, err := e.provider.Generate(ctx, contextHistory, availableTools)
+		if err != nil {
+			return "", fmt.Errorf("Subagent推理失败: %w", err)
+		}
+
+		contextHistory = append(contextHistory, *actionResp)
+
+		// 可视化：模型输出了纯文本时通知外部（如终端、飞书）
+		if actionResp.Content != "" && r != nil {
+			r.OnMessage(ctx, actionResp.Content)
+		}
+
+		// 退出条件：Subagent 一旦不调用工具了，说明它做好了总结汇报
+		if len(actionResp.ToolCalls) == 0 {
+			return actionResp.Content, nil
+		}
+
+		// 可视化：逐条通知外部 Subagent 正在调用什么工具，打上 [Subagent] 前缀与主 Agent 区分
+		for _, call := range actionResp.ToolCalls {
+			if r != nil {
+				r.OnToolCall(ctx, fmt.Sprintf("[Subagent] %s", call.Name), string(call.Arguments))
+			}
+		}
+
+		// 使用只读注册表执行工具 —— 确保 Subagent 只能读，不能写/删/执行危险命令
+		rawResults := readOnlyRegistry.ExecuteParallel(ctx, actionResp.ToolCalls, nil)
+
+		for i, result := range rawResults {
+			call := actionResp.ToolCalls[i]
+
+			// 可视化：通知工具执行结果
+			if r != nil {
+				output := result.Output
+				if len(output) > 200 {
+					output = output[:200] + "...(已截断)"
+				}
+				r.OnToolResult(ctx, fmt.Sprintf("[Subagent] %s", call.Name), output, result.IsError)
+			}
+
+			if result.IsError {
+				log.Printf(" -> [Sub-%d] ❌ %s: %s\n", i, call.Name, result.Output)
+			} else {
+				log.Printf(" -> [Sub-%d] ✅ %s (返回 %d 字节)\n", i, call.Name, len(result.Output))
+			}
+
+			contextHistory = append(contextHistory, schema.Message{
+				Role:       schema.RoleUser,
+				Content:    result.Output,
+				ToolCallID: call.ID,
+			})
+		}
+	}
+}
+
 // dumpSession 将当前轮次的完整上下文写入 session.json
 func (e *AgentEngine) dumpSession(turn int, session *Session, history []schema.Message) {
 	type sessionData struct {

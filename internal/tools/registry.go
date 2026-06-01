@@ -132,7 +132,6 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 	}
 }
 
-// ExecuteParallel 接管原本写在 engine 里的并行调度。
 // 锁策略：
 //   - 实现了 LockHinter 的工具：global RLock + 按 path 字典序逐个 acquire(path, mode)。
 //   - 未实现 LockHinter 的工具（如 bash）：global Lock，期间挡住所有文件类工具。
