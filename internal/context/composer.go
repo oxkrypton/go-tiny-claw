@@ -10,16 +10,18 @@ import (
 
 // PromptComposer 负责根据工作区环境动态生成 System Prompt
 type PromptComposer struct {
-	workDir     string
-	planMode    bool
-	skillLoader *SkillLoader
+	workDir        string
+	planMode       bool
+	blueprintLoader *BlueprintLoader
+	skillLoader    *SkillLoader
 }
 
 func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
 	return &PromptComposer{
-		workDir:     workDir,
-		planMode:    planMode,
-		skillLoader: NewSkillLoader(workDir),
+		workDir:        workDir,
+		planMode:       planMode,
+		blueprintLoader: NewBlueprintLoader(workDir),
+		skillLoader:    NewSkillLoader(workDir),
 	}
 }
 
@@ -40,7 +42,7 @@ func (c *PromptComposer) Build() schema.Message {
 4. 遇到工具执行报错时，仔细阅读 stderr，尝试自己修正命令并重试。
 `)
 
-	if c.planMode{
+	if c.planMode {
 		promptBuilder.WriteString(`
 # 长程任务与状态外部化强制规范 (Plan Mode: ON)
 
@@ -55,14 +57,14 @@ func (c *PromptComposer) Build() schema.Message {
 **[STEP 2: 严格的单步执行与实时打勾]**
 - 开始执行 ` + "`TODO.md`" + ` 中未完成的任务。
 - **强制约束**：每当你通过 write_file 或 bash 真正完成了一个子任务后，你**必须立即停下来**，优先使用 edit_file 工具（或 bash 的 sed 命令），将 ` + "`TODO.md`" + ` 中对应的行修改为 ` + "`- [x]`" + `。
-- 绝对不允许“一口气写完所有代码最后再打勾”。做完一步，必须打勾一步！
+- 绝对不允许"一口气写完所有代码最后再打勾"。做完一步，必须打勾一步！
 
 **[STEP 3: 迷失时的自救]**
 - 如果你在执行中遇到了报错，或者不知道下一步该干嘛了，立即使用 read_file 重新读取 ` + "`TODO.md`" + ` 确认自己的位置。
 `)
 	}
 
-	// 3. 外部化状态: 加载项目专属规范 (AGENTS.md)
+	// 2. 外部化状态: 加载项目专属规范 (AGENTS.md)
 	agentsMDPath := filepath.Join(c.workDir, "AGENTS.md")
 	content, err := os.ReadFile(agentsMDPath)
 	if err == nil {
@@ -72,7 +74,13 @@ func (c *PromptComposer) Build() schema.Message {
 
 	}
 
-	// 3. 动态加载skill
+	// 3. 动态加载架构蓝图索引 (Blueprint)
+	blueprintContent := c.blueprintLoader.LoadIndex()
+	if blueprintContent != "" {
+		promptBuilder.WriteString(blueprintContent)
+	}
+
+	// 4. 动态加载skill
 	skillContent := c.skillLoader.LoadAll()
 	if skillContent != "" {
 		promptBuilder.WriteString(skillContent)
