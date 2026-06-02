@@ -28,7 +28,7 @@ go test ./internal/tools/ -run TestName -v
 
 ### Layer model (top → bottom)
 
-1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `GlobalSessionMgr`, registers all 5 tools (read_file, write_file, edit_file, bash, spawn_subagent) plus a read-only subagent registry, then calls `eng.Run()` with a user prompt.
+1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `GlobalSessionMgr`, registers all 5 tools (read_file, write_file, edit_file, bash, spawn_subagent) plus a read-only subagent registry, then calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
 
 2. **Engine** (`internal/engine/`) — the core ReAct loop in `loop.go`. Each turn:
    - Builds context from dynamic system prompt (via `PromptComposer`) + working memory (last 20 messages from session).
@@ -38,7 +38,7 @@ go test ./internal/tools/ -run TestName -v
    - Appends results as user messages with `ToolCallID` set, preserving the reasoning chain. The loop exits when the model returns zero tool calls.
    - Each turn dumps the full context history to `session.json` for debugging.
    - `RunSub()` provides isolated sub-agent execution (max 10 turns, read-only registry, returns text summary).
-   - `Session` (`session.go`): thread-safe history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
+   - `Session` (`session.go`): thread-safe history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `RecordUsage(prompt, completion, cost)` accumulates token usage and cost over the session lifetime. `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
    - `Reporter` interface (`reporter.go`): 4 callbacks (OnThinking, OnToolCall, OnToolResult, OnMessage) for pluggable output. `TerminalReporter` outputs with emoji and hierarchical indentation for sub-agents.
    - `ReminderInjector` (`reminder.go`): monitors consecutive tool call failures via MD5 fingerprinting. After 3 identical failures, injects a `RoleUser` intervention message to break dead loops.
 
@@ -51,6 +51,7 @@ go test ./internal/tools/ -run TestName -v
 
 4. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate(ctx, messages, tools) *schema.Message`).
    - Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
+   - Both providers extract `Usage` (input/output tokens) from the API response and attach it to the returned `*schema.Message`.
    - `OpenAIProvider` (`openai.go`): uses `openai-go/v3` SDK, translates internal `schema.Message` to OpenAI API format. Thinking mode disabled.
    - `ClaudeProvider` (`claude.go`): uses `anthropic-sdk-go`, sends system prompt separately, translates ToolUseBlock/ToolResultBlock.
 
@@ -76,6 +77,11 @@ go test ./internal/tools/ -run TestName -v
    - `ToolCall`: ID, Name, Arguments (json.RawMessage).
    - `ToolResult`: ToolCallID, Output, ErrorCode, IsError.
    - `ToolError` (`errors.go`): structured error with `Code` (ErrorCode), `Message`, `Cause`. Implements `Unwrap()` for error chain support.
+   - `Usage` struct: `PromptTokens` + `CompletionToken` fields, attached to assistant `Message` via `Message.Usage *Usage`.
+
+8. **Observability** (`internal/observability/`) — cost tracking and telemetry:
+   - `CostTracker` (`tracker.go`): decorator implementing `LLMProvider` that wraps the real provider. Per call, it measures latency, reads `Usage` from the response, computes cost against a hardcoded `PricingModel` map (USD/1M tokens), logs a dashboard line, and calls `session.RecordUsage()` to accumulate totals.
+   - Pricing is model-keyed (e.g. `"deepseek-v4-flash": {InputPrice: 0.14, OutputPrice: 0.28}`). Unknown models log zero cost rather than erroring.
 
 ### Provider switching
 

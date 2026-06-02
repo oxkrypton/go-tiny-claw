@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
@@ -17,11 +18,16 @@ func main() {
 	workDir, _ := os.Getwd()
 	workDir += "/testdata"
 
+	modelName := "deepseek-v4-flash"
+
 	sessionID := "test_001"
 	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
 
-	// 1. 初始化真实的 Provider大脑
-	llmProvider := provider.NewOpenAIProvider("deepseek-v4-flash")
+	// 初始化真实的 Provider大脑
+	llmProvider := provider.NewOpenAIProvider(modelName)
+
+	// 用 tracker 将大模型包裹起来
+	trackedProvider := observability.NewCostTracker(llmProvider, modelName, sess)
 
 	// 注入的工具注册表
 	registry := tools.NewRegistry()
@@ -34,7 +40,7 @@ func main() {
 	reporter := engine.NewTerminalReporter()
 
 	// 实例化并运行引擎
-	eng := engine.NewAgentEngine(llmProvider, registry, false)
+	eng := engine.NewAgentEngine(trackedProvider, registry, false)
 
 	// 挂载 5 大基础工具
 	registry.Register(tools.NewReadFileTool(workDir))
@@ -44,16 +50,17 @@ func main() {
 	//将subagent功能注入
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
 
-	prompt := ` 
-我需要你在这个遗留项目里，找到那个“核心密码”。 
-为了防止污染主上下文，请你务必派出子智能体（spawn_subagent）去执行探索任务。 
-你可以让子智能体使用 bash 去查找当前目录（及其所有子目录）下名为 config.txt 的文件。 
-子智能体拿到密码向你汇报后，请你亲自使用 write_file 工具，将密码写在根目录的 answer.txt 里。 
-`
-	log.Println("\n>>> 🚀 启动多智能体协同测试...")
+	prompt := `请用 bash 帮我用 date 命令查一下现在的时间.`
+	log.Println("\n>>> 🚀 启动测试...")
 	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
+
 	err := eng.Run(context.Background(), sess, reporter)
 	if err != nil {
 		log.Fatalf("引擎运行崩溃: %v", err)
 	}
+
+	log.Printf("会话 ID: %s\n", sess.ID)
+	log.Printf("总消耗 Input Tokens: %d\n", sess.TotalPromptTokens)
+	log.Printf("总消耗 Output Tokens: %d\n", sess.TotalCompletionTokens)
+	log.Printf("总计费用 (CNY): ¥%.6f\n", sess.TotalCostCNY)
 }

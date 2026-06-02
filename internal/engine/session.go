@@ -17,6 +17,11 @@ type Session struct {
 	//存放此 Session 中所有的用户输入、大模型回复和工具调用结果
 	history []schema.Message
 	mu      sync.RWMutex
+
+	// 用于统计该 Session 累计消耗的资源
+	TotalPromptTokens     int
+	TotalCompletionTokens int
+	TotalCostCNY          float64
 }
 
 func NewSession(id string, workDir string) *Session {
@@ -93,4 +98,13 @@ func (sm *SessionManager) GetOrCreate(id string, workDir string) *Session {
 	sess := NewSession(id, workDir)
 	sm.sessions[id] = sess
 	return sess
+}
+
+// RecordUsage 是一个给外部 Tracker 调用的辅助方法，用于累加账单
+func (s *Session) RecordUsage(prompt int, completion int, cost float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TotalPromptTokens += prompt
+	s.TotalCompletionTokens += completion
+	s.TotalCostCNY += cost
 }

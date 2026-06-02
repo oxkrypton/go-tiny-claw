@@ -10,6 +10,12 @@ const (
 	RoleAssistant Role = "assistant" //模型的输出: 包含推理(Reasoning)或工具调用(ToolCall)
 )
 
+// Usage 记录了单次大模型 API 调用的 Token 消耗
+type Usage struct {
+	PromptTokens    int `json:"prompt_tokens"`     // 输入的 Token 数量
+	CompletionToken int `json:"completion_tokens"` // 产生的 Token 数量
+}
+
 // Message 代表上下文中传递的单条消息
 type Message struct {
 	Role    Role   `json:"role"`
@@ -20,6 +26,9 @@ type Message struct {
 
 	//如果这是对某个工具调用的响应，此字段必须填写，以告知模型上下文的关联性
 	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	//如果这是大模型 (Assistant) 的回复，此字段存放本次调用的 Token 消耗
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 type ToolCall struct {
@@ -31,10 +40,10 @@ type ToolCall struct {
 
 // ToolResult 代表工具在本地执行完毕后返回的物理结果
 type ToolResult struct {
-	ToolCallID string `json:"tool_call_id"`
-	Output     string    `json:"output"`                //工具执行的控制台输出或报错堆栈
-	ErrorCode  ErrorCode `json:"error_code,omitempty"`  //稳定错误分类码，供 engine 层增强用
-	IsError    bool      `json:"is_error"`              //标记是否失败，供后续程序自行纠错
+	ToolCallID string    `json:"tool_call_id"`
+	Output     string    `json:"output"`               //工具执行的控制台输出或报错堆栈
+	ErrorCode  ErrorCode `json:"error_code,omitempty"` //稳定错误分类码，供 engine 层增强用
+	IsError    bool      `json:"is_error"`             //标记是否失败，供后续程序自行纠错
 }
 
 // ToolDefinition 描述了一个大模型可以调用的工具元信息 (供模型理解工具有什么用)
