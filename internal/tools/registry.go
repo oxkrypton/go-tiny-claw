@@ -10,7 +10,6 @@ import (
 	"sort"
 	"sync"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
@@ -40,12 +39,19 @@ type LockHinter interface {
 	LockHints(args json.RawMessage) ([]LockRequest, error)
 }
 
+// MiddlewareFunc 定义了中间件的签名。
+// 它接收当前的 ToolCall，并返回一个是否允许执行的布尔值 (allowed)，以及拦截时的原因 (rejectReason)。
+type MiddlewareFunc func(ctx context.Context, call schema.ToolCall) (allowed bool, rejectReason string)
+
 // Registry 定义了工具的注册和分发执行接口。
 // 对外只暴露 ExecuteParallel 一个执行入口，所有工具调用都必须经过路径锁调度，
 // 避免外部调用方绕过锁直接 Execute 导致并发安全问题。
 type Registry interface {
 	//Register 挂载一个新的工具到系统中
 	Register(tool BaseTool)
+
+	//全局 Middleware 挂载点
+	Use(mw MiddlewareFunc)
 
 	//GetAvailavleTools 返回当前系统挂载的所有可用工具的 Schema
 	GetAvailableTools() []schema.ToolDefinition
@@ -59,17 +65,21 @@ type Registry interface {
 // registryImpl 是 Registry 接口的默认实现
 type registryImpl struct {
 	//使用 map 以工具的 name 作为 key 进行快速 O(1) 路由查找
-	tools   map[string]BaseTool
-	lockMgr *PathLockManager
-	recover *ctxpkg.RecoveryManager // 自愈管理
+	tools       map[string]BaseTool
+	middlewares []MiddlewareFunc
+	lockMgr     *PathLockManager
 }
 
 func NewRegistry() Registry {
 	return &registryImpl{
-		tools:   make(map[string]BaseTool),
-		lockMgr: NewPathLockManager(),
-		recover: ctxpkg.NewRecoveryManager(),
+		tools:       make(map[string]BaseTool),
+		middlewares: make([]MiddlewareFunc, 0),
+		lockMgr:     NewPathLockManager(),
 	}
+}
+
+func (r *registryImpl) Use(mw MiddlewareFunc) {
+	r.middlewares = append(r.middlewares, mw)
 }
 
 func (r *registryImpl) Register(tool BaseTool) {
@@ -92,7 +102,8 @@ func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
 // execute 是内部执行入口：tool 必须由调用方提前查好（runWithLocks 已经查过一次）。
 // 这样避免与并行路径上的查表重复。tool == nil 表示工具不存在，统一返回模型可读的错误。
 func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool BaseTool) schema.ToolResult {
-	if tool == nil {
+	_, exists := r.tools[call.Name]
+	if !exists {
 		return schema.ToolResult{
 			ToolCallID: call.ID,
 			Output:     fmt.Sprintf("Error: 系统中不存在名为 '%s' 的工具", call.Name),
@@ -107,10 +118,10 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 		if errors.As(err, &toolErr) {
 			code = toolErr.Code
 		}
-		rawOutput := fmt.Sprintf("执行工具 %s 失败: %v", call.Name, err)
 		return schema.ToolResult{
 			ToolCallID: call.ID,
-			Output:     r.recover.AnalyzeAndInject(call.Name, rawOutput, code),
+			Output:     fmt.Sprintf("执行工具 %s 失败: %v", call.Name, err),
+			ErrorCode:  code,
 			IsError:    true,
 		}
 	}
@@ -121,7 +132,6 @@ func (r *registryImpl) execute(ctx context.Context, call schema.ToolCall, tool B
 	}
 }
 
-// ExecuteParallel 接管原本写在 engine 里的并行调度。
 // 锁策略：
 //   - 实现了 LockHinter 的工具：global RLock + 按 path 字典序逐个 acquire(path, mode)。
 //   - 未实现 LockHinter 的工具（如 bash）：global Lock，期间挡住所有文件类工具。
@@ -158,8 +168,23 @@ func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolC
 
 // runWithLocks 处理单个工具调用的锁获取 → 执行 → 释放。
 func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, out *schema.ToolResult) {
-	tool := r.tools[call.Name] // 可能为 nil，由 execute 统一处理"工具不存在"
+	tool := r.tools[call.Name]
 
+	// 先走 middleware 审批链，审批通过后再拿锁，避免阻塞期间占住全局锁。
+	for _, mw := range r.middlewares {
+		allowed, reason := mw(ctx, call)
+		if !allowed {
+			log.Printf("[Registry] ⚠️ 工具 %s 被 Middleware 拦截: %s\n", call.Name, reason)
+			*out = schema.ToolResult{
+				ToolCallID: call.ID,
+				Output:     fmt.Sprintf("执行被系统拦截。原因: %s", reason),
+				IsError:    true,
+			}
+			return
+		}
+	}
+
+	// tool == nil 表示工具不存在，由 execute 统一处理
 	hinter, ok := tool.(LockHinter)
 	if !ok {
 		// 当其他协程 RLock() 时, 阻塞 bash 操作,
@@ -175,6 +200,7 @@ func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, o
 		*out = schema.ToolResult{
 			ToolCallID: call.ID,
 			Output:     fmt.Sprintf("Error: 解析工具参数失败: %v", err),
+			ErrorCode:  schema.ErrInvalidArguments,
 			IsError:    true,
 		}
 		return

@@ -18,22 +18,40 @@ func (r *TerminalReporter) OnThinking(ctx context.Context) {
 }
 
 func (r *TerminalReporter) OnToolCall(ctx context.Context, toolName string, args string) {
+	if strings.HasPrefix(toolName, "[Subagent]") {
+		// Subagent 工具调用缩进显示，与主 Agent 形成层次
+		name := strings.TrimPrefix(toolName, "[Subagent] ")
+		fmt.Printf("  🔍 探查 › %s\n", name)
+		displayArgs := strings.ReplaceAll(args, "\n", "\\n")
+		if len(displayArgs) > 120 {
+			displayArgs = displayArgs[:120] + "..."
+		}
+		fmt.Printf("     %s\n", displayArgs)
+		return
+	}
 	fmt.Printf("[🛠️ 调用工具] %s\n", toolName)
-	// 截断过长的参数显示，保持终端清爽
 	displayArgs := strings.ReplaceAll(args, "\n", "\\n")
 	displayArgs = strings.ReplaceAll(displayArgs, "\r", "\\r")
 	if len(displayArgs) > 150 {
 		displayArgs = displayArgs[:150] + "... (已截断)"
 	}
-	fmt.Printf("参数: %s\n", displayArgs)
+	fmt.Printf("   参数: %s\n", displayArgs)
 }
 
 func (r *TerminalReporter) OnToolResult(ctx context.Context, toolName string, result string, isError bool) {
+	if strings.HasPrefix(toolName, "[Subagent]") {
+		name := strings.TrimPrefix(toolName, "[Subagent] ")
+		if isError {
+			fmt.Printf("  ❌ 探查 › %s\n", name)
+		} else {
+			fmt.Printf("  ✅ 探查 › %s\n", name)
+		}
+		return
+	}
 	if isError {
 		fmt.Printf("[❌ 执行失败] %s\n", toolName)
-		//显示错误信息
 		if result != "" {
-			fmt.Printf("错误: %s\n", result)
+			fmt.Printf("   错误: %s\n", result)
 		}
 	} else {
 		fmt.Printf("[✅ 执行成功] %s\n", toolName)

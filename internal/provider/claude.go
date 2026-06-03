@@ -35,7 +35,7 @@ func (p *ClaudeProvider) Generate(ctx context.Context, msgs []schema.Message, av
 		//系统提示词
 		case schema.RoleSystem:
 			systemPrompt = msg.Content
-		
+
 		//用户信息
 		case schema.RoleUser:
 			//工具执行返回信息
@@ -43,7 +43,7 @@ func (p *ClaudeProvider) Generate(ctx context.Context, msgs []schema.Message, av
 				anthropicMsgs = append(anthropicMsgs, anthropic.NewUserMessage(
 					anthropic.NewToolResultBlock(msg.ToolCallID, msg.Content, false),
 				))
-			//用户发送信息
+				//用户发送信息
 			} else {
 				anthropicMsgs = append(anthropicMsgs, anthropic.NewUserMessage(
 					anthropic.NewTextBlock(msg.Content),
@@ -127,6 +127,14 @@ func (p *ClaudeProvider) Generate(ctx context.Context, msgs []schema.Message, av
 	// 4. 反向解析
 	resultMsg := &schema.Message{
 		Role: schema.RoleAssistant,
+	}
+
+	// 提取 Usage 信息
+	if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
+		resultMsg.Usage = &schema.Usage{
+			PromptTokens:    int(resp.Usage.InputTokens),
+			CompletionToken: int(resp.Usage.OutputTokens),
+		}
 	}
 
 	for _, block := range resp.Content {

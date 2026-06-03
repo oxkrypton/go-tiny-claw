@@ -7,11 +7,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
@@ -21,9 +24,13 @@ type FeishuBot struct {
 	appID     string
 	appSecret string
 	engine    *engine.AgentEngine // 持有核心引擎引用
+	sess      engine.Session
+	r         *FeishuReporter
+	running   map[string]bool // chatId → 是否正在执行 Agent 任务
+	runMu     sync.Mutex
 }
 
-func NewFeishuBot(eng *engine.AgentEngine) *FeishuBot {
+func NewFeishuBot(eng *engine.AgentEngine, sess engine.Session) *FeishuBot {
 	appID := os.Getenv("FEISHU_APP_ID")
 	appSecret := os.Getenv("FEISHU_APP_SECRET")
 
@@ -39,6 +46,8 @@ func NewFeishuBot(eng *engine.AgentEngine) *FeishuBot {
 		appID:     appID,
 		appSecret: appSecret,
 		engine:    eng,
+		sess:      sess,
+		running:   make(map[string]bool),
 	}
 }
 
@@ -55,14 +64,57 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 			chatId := *event.Event.Message.ChatId
 			log.Printf("[Feishu] 收到会话 %s 信息: %s \n", chatId, contentStr)
 
+			// 并发守卫：同一会话只能有一个 Agent 任务在执行，
+			// 否则新消息会插入到 assistant(tool_calls) 和 tool_result 之间，破坏 LLM 协议。
+			b.runMu.Lock()
+			if b.running[chatId] {
+				b.runMu.Unlock()
+				tmp := &FeishuReporter{client: b.client, chatId: chatId}
+				tmp.sendMsg("⏳ 当前任务还在执行中，请稍后再发送指令...")
+				return nil
+			}
+			b.running[chatId] = true
+			b.runMu.Unlock()
+
 			// 长连接同样要求 3 秒内完成处理，否则会重推，因此必须异步
-			go b.handleAgentRun(chatId, contentStr)
+			go func() {
+				defer func() {
+					b.runMu.Lock()
+					delete(b.running, chatId)
+					b.runMu.Unlock()
+				}()
+				b.handleAgentRun(chatId, contentStr)
+			}()
 
 			return nil
+		}).
+		OnP2CardActionTrigger(func(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+			action := event.Event.Action
+			taskID, _ := action.Value["taskID"].(string)
+			act, _ := action.Value["action"].(string)
+
+			switch act {
+			case "approve":
+				GlovalApprovalMgr.ResolveApproval(taskID, true, "管理员已批准")
+			case "reject":
+				GlovalApprovalMgr.ResolveApproval(taskID, false, "管理员已拒绝")
+			}
+
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "success",
+					Content: fmt.Sprintf("已%s该操作", map[string]string{"approve": "批准", "reject": "拒绝"}[act]),
+				},
+			}, nil
 		})
 
 	cli := larkws.NewClient(b.appID, b.appSecret, larkws.WithEventHandler(handler))
 	return cli.Start(ctx)
+}
+
+// 返回FeishuBot绑定的Reporter
+func (b *FeishuBot) Reporter() *FeishuReporter {
+	return b.r
 }
 
 // handleAgentRun 是连接飞书与底层引擎的桥梁
@@ -73,8 +125,11 @@ func (b *FeishuBot) handleAgentRun(chatId string, prompt string) {
 		chatId: chatId,
 	}
 
+	b.r = reporter
+	b.sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
+
 	// 启动引擎
-	err := b.engine.Run(context.Background(), nil,reporter)
+	err := b.engine.Run(context.Background(), &b.sess, reporter)
 	if err != nil {
 		reporter.sendMsg(fmt.Sprintf("❌ Agent 运行崩溃: %v", err))
 
@@ -89,9 +144,8 @@ type FeishuReporter struct {
 	chatId string
 }
 
-// sendMsg 封装了调用飞书 OpenAPI 发送卡片/文本的操作
+// sendMsg 封装了调用飞书 OpenAPI 发送文本消息的操作
 func (r *FeishuReporter) sendMsg(text string) {
-	// 构建文本信息内容
 	textCotent := map[string]string{
 		"text": text,
 	}
@@ -104,6 +158,20 @@ func (r *FeishuReporter) sendMsg(text string) {
 			ReceiveId(r.chatId).
 			MsgType(larkim.MsgTypeText).
 			Content(contentStr).
+			Build()).
+		Build()
+
+	_, _ = r.client.Im.Message.Create(context.Background(), msgReq)
+}
+
+// sendCard 发送飞书交互卡片消息（审批按钮等）。
+func (r *FeishuReporter) sendCard(cardJSON string) {
+	msgReq := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(r.chatId).
+			MsgType("interactive").
+			Content(cardJSON).
 			Build()).
 		Build()
 
