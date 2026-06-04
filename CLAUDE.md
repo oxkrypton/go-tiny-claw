@@ -28,26 +28,26 @@ go test ./internal/tools/ -run TestName -v
 
 ### Layer model (top → bottom)
 
-1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `GlobalSessionMgr`, registers all 5 tools (read_file, write_file, edit_file, bash, spawn_subagent) plus a read-only subagent registry, then calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
+1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `context.GlobalSessionMgr`, registers all 6 tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry, then calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
 
 2. **Engine** (`internal/engine/`) — the core ReAct loop in `loop.go`. Each turn:
-   - Builds context from dynamic system prompt (via `PromptComposer`) + working memory (last 20 messages from session).
+   - Builds context from dynamic system prompt (via `context.PromptComposer`) + working memory (last 20 messages from `context.Session`).
    - Calls the LLM with tools available — the model decides in a single call whether to emit text or tool calls.
    - Executes tool calls concurrently via `registry.ExecuteParallel()`.
    - Post-processes: error recovery hints (`RecoveryManager`), dead-loop detection (`ReminderInjector`), context compaction (`Compactor`).
    - Appends results as user messages with `ToolCallID` set, preserving the reasoning chain. The loop exits when the model returns zero tool calls.
    - Each turn dumps the full context history to `session.json` for debugging.
    - `RunSub()` provides isolated sub-agent execution (max 10 turns, read-only registry, returns text summary).
-   - `Session` (`session.go`): thread-safe history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `RecordUsage(prompt, completion, cost)` accumulates token usage and cost over the session lifetime. `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
    - `Reporter` interface (`reporter.go`): 4 callbacks (OnThinking, OnToolCall, OnToolResult, OnMessage) for pluggable output. `TerminalReporter` outputs with emoji and hierarchical indentation for sub-agents.
    - `ReminderInjector` (`reminder.go`): monitors consecutive tool call failures via MD5 fingerprinting. After 3 identical failures, injects a `RoleUser` intervention message to break dead loops.
 
-3. **Context** (`internal/context/`) — dynamic system prompt assembly and safety mechanisms:
-   - `PromptComposer` (`composer.go`): builds the system prompt from: core identity/rules, optional plan mode instructions, `AGENTS.md` project guide, blueprint index from `.claw/blueprint/*.md`, and dynamically loaded skills from `.claw/skills/*/SKILL.md`.
+3. **Context** (`internal/context/`) — dynamic system prompt assembly, session state, and safety mechanisms:
+   - `Session` (`session.go`): thread-safe conversation history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `RecordUsage(prompt, completion, cost)` accumulates token usage and cost. `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
+   - `PromptComposer` (`composer.go`): builds the system prompt from: core identity/rules, optional plan mode instructions, `AGENTS.md` project guide, blueprint index from `.claw/blueprint/*.md`, and skill index from `.claw/skills/*/SKILL.md`.
    - `Compactor` (`compactor.go`): prevents OOM by monitoring context length. When exceeding threshold (default 20,000 chars), masks old tool results and truncates large recent ones (head+tail preservation).
    - `RecoveryManager` (`recover.go`): injects actionable Chinese-language recovery hints on tool errors, prioritized by `ErrorCode` match with string-pattern fallback.
-   - `SkillLoader` (`skill.go`): scans `.claw/skills/` directory, parses YAML frontmatter from `SKILL.md` files, and formats them for system prompt injection.
-   - `BlueprintLoader` (`blueprint.go`): scans `.claw/blueprint/*.md` and injects only a compact index into the system prompt (file list + first-heading descriptions). The agent reads full blueprint files on-demand via `read_file` when it actually needs to work in a given directory, avoiding per-turn token waste.
+   - `SkillLoader` (`skill.go`): progressive disclosure via two-level loading. `LoadIndex()` injects only skill names + trigger descriptions into the system prompt (compact). `LoadOne(name)` loads a single skill's full SKILL.md body on demand via the `skill` tool. On miss, returns all available skill names for model self-healing.
+   - `BlueprintLoader` (`blueprint.go`): progressive disclosure — injects only a compact index into the system prompt (file list + first-heading descriptions). The agent reads full blueprint files on-demand via `read_file` when it actually needs to work in a given directory, avoiding per-turn token waste.
 
 4. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate(ctx, messages, tools) *schema.Message`).
    - Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
@@ -61,12 +61,13 @@ go test ./internal/tools/ -run TestName -v
    - `MiddlewareFunc`: intercepts tool calls before lock acquisition. Used by feishu approval to block dangerous commands.
    - `ExecuteParallel`: concurrent execution via `sync.WaitGroup` + buffered channel semaphore (cap 5), preserving result order by index.
    - `PathLockManager` (`lockmgr.go`): two-tier locking — global `RWMutex` (bash vs file tools mutual exclusion) + per-path `RWMutex` pool (same-path serial, cross-path parallel). Paths are sorted/normalized to prevent deadlocks. `refCount` auto-cleans entries from the map.
-   - 5 registered tools:
+   - 6 registered tools:
      - `read_file` — reads file content with `start_line`/`end_line` range. Truncated at 50KB.
      - `write_file` — creates or overwrites files. Auto-creates parent directories.
      - `edit_file` — exact string replacement. Two-pass algorithm: L1 exact match → L2 newline-normalized fallback. Returns structured errors (`ErrOldTextNotFound` / `ErrOldTextAmbiguous`).
      - `bash` — executes shell commands with 30s timeout. Output truncated at 30KB.
      - `spawn_subagent` (`subagent.go`) — delegates exploration to an isolated sub-agent with read-only tools (read_file + bash). Uses `AgentRunner` interface to avoid circular imports.
+     - `skill` (`skill.go`) — loads a skill's full SKILL.md body on demand by name. Part of the progressive disclosure pattern: the system prompt only carries a compact index, and the model calls this tool when a skill matches the current task.
 
 6. **Feishu** (`internal/feishu/`) — Feishu IM integration:
    - `FeishuBot` (`bot.go`): WebSocket-based bot that receives messages and routes them to `AgentEngine.Run`. `FeishuReporter` sends progress back to chat.
