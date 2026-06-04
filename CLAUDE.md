@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 开发辅助
 
-修改 `internal/` 下任何模块前，先用 read_file 查阅 `~/.claude/blueprint/` 对应的设计文档了解约定和陷阱：
+修改 `internal/` 下任何模块前，先查阅 `~/.claude/blueprint/` 对应的设计文档了解约定和陷阱：
 
 | 模块 | Blueprint |
 |------|-----------|
