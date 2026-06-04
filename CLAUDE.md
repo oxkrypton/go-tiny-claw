@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **每次提交新功能后，必须检查本文件是否需要更新。** 新增的模块、工具、接口或架构变更都应及时反映在此文档中。提交前将"检查 CLAUDE.md 是否过期"作为必查项。
 
+## 开发辅助
+
+修改 `internal/` 下任何模块前，先用 read_file 查阅 `~/.claude/blueprint/` 对应的设计文档了解约定和陷阱：
+
+| 模块 | Blueprint |
+|------|-----------|
+| `internal/context/` | `~/.claude/blueprint/context.md` |
+| `internal/engine/` | `~/.claude/blueprint/engine.md` |
+| `internal/tools/` | `~/.claude/blueprint/tools.md` |
+
 ## Commands
 
 ```bash
