@@ -43,12 +43,10 @@ go test ./internal/tools/ -run TestName -v
 
 3. **Context** (`internal/context/`) — dynamic system prompt assembly, session state, and safety mechanisms:
    - `Session` (`session.go`): thread-safe conversation history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `RecordUsage(prompt, completion, cost)` accumulates token usage and cost. `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
-   - `PromptComposer` (`composer.go`): builds the system prompt from: core identity/rules, optional plan mode instructions, `AGENTS.md` project guide, blueprint index from `.claw/blueprint/*.md`, and skill index from `.claw/skills/*/SKILL.md`.
+   - `PromptComposer` (`composer.go`): builds the system prompt from: core identity/rules, optional plan mode instructions, `AGENTS.md` project guide, and skill index from `.claw/skills/*/SKILL.md`.
    - `Compactor` (`compactor.go`): prevents OOM by monitoring context length. When exceeding threshold (default 20,000 chars), masks old tool results and truncates large recent ones (head+tail preservation).
    - `RecoveryManager` (`recover.go`): injects actionable Chinese-language recovery hints on tool errors, prioritized by `ErrorCode` match with string-pattern fallback.
    - `SkillLoader` (`skill.go`): progressive disclosure via two-level loading. `LoadIndex()` injects only skill names + trigger descriptions into the system prompt (compact). `LoadOne(name)` loads a single skill's full SKILL.md body on demand via the `skill` tool. On miss, returns all available skill names for model self-healing.
-   - `BlueprintLoader` (`blueprint.go`): progressive disclosure — injects only a compact index into the system prompt (file list + first-heading descriptions). The agent reads full blueprint files on-demand via `read_file` when it actually needs to work in a given directory, avoiding per-turn token waste.
-
 4. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate(ctx, messages, tools) *schema.Message`).
    - Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
    - Both providers extract `Usage` (input/output tokens) from the API response and attach it to the returned `*schema.Message`.
