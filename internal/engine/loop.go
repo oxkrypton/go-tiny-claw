@@ -35,7 +35,7 @@ func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *Ag
 }
 
 // Run 启动 Agent 的生命周期
-func (e *AgentEngine) Run(ctx context.Context, session *Session, reporter Reporter) error {
+func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter Reporter) error {
 	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s (PlanMode: %v)\n", session.ID, session.WorkDir, e.PlanMode)
 
 	turnCount := 0
@@ -233,7 +233,7 @@ func (e *AgentEngine) RunSub(ctx context.Context, taskPrompt string, readOnlyReg
 }
 
 // dumpSession 将当前轮次的完整上下文写入 session.json
-func (e *AgentEngine) dumpSession(turn int, session *Session, history []schema.Message) {
+func (e *AgentEngine) dumpSession(turn int, session *ctxpkg.Session, history []schema.Message) {
 	type sessionData struct {
 		Turn    int              `json:"turn"`
 		Context []schema.Message `json:"context"`

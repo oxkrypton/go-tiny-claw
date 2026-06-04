@@ -80,8 +80,8 @@ func (c *PromptComposer) Build() schema.Message {
 		promptBuilder.WriteString(blueprintContent)
 	}
 
-	// 4. 动态加载skill
-	skillContent := c.skillLoader.LoadAll()
+	// 4. 动态加载 skill 索引（渐进式披露：仅注入名称+触发条件，完整指令按需 read_file）
+	skillContent := c.skillLoader.LoadIndex()
 	if skillContent != "" {
 		promptBuilder.WriteString(skillContent)
 	}
