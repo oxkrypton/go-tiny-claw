@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
@@ -21,7 +22,7 @@ func main() {
 	modelName := "deepseek-v4-flash"
 
 	sessionID := "test_001"
-	sess := engine.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
+	sess := ctxpkg.GlobalSessionMgr.GetOrCreate(sessionID, workDir)
 
 	// 初始化真实的 Provider大脑
 	llmProvider := provider.NewOpenAIProvider(modelName)
@@ -49,6 +50,8 @@ func main() {
 	registry.Register(tools.NewEditFileTool(workDir))
 	//将subagent功能注入
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
+	// skill 动态加载工具（渐进式披露：按需加载完整 SKILL.md）
+	registry.Register(tools.NewSkillTool(workDir))
 
 	prompt := `请用 bash 帮我用 date 命令查一下现在的时间.`
 	log.Println("\n>>> 🚀 启动测试...")

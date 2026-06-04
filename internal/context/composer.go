@@ -10,18 +10,16 @@ import (
 
 // PromptComposer 负责根据工作区环境动态生成 System Prompt
 type PromptComposer struct {
-	workDir        string
-	planMode       bool
-	blueprintLoader *BlueprintLoader
-	skillLoader    *SkillLoader
+	workDir     string
+	planMode    bool
+	skillLoader *SkillLoader
 }
 
 func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
 	return &PromptComposer{
-		workDir:        workDir,
-		planMode:       planMode,
-		blueprintLoader: NewBlueprintLoader(workDir),
-		skillLoader:    NewSkillLoader(workDir),
+		workDir:     workDir,
+		planMode:    planMode,
+		skillLoader: NewSkillLoader(workDir),
 	}
 }
 
@@ -74,14 +72,8 @@ func (c *PromptComposer) Build() schema.Message {
 
 	}
 
-	// 3. 动态加载架构蓝图索引 (Blueprint)
-	blueprintContent := c.blueprintLoader.LoadIndex()
-	if blueprintContent != "" {
-		promptBuilder.WriteString(blueprintContent)
-	}
-
-	// 4. 动态加载skill
-	skillContent := c.skillLoader.LoadAll()
+	// 3. 动态加载 skill 索引（渐进式披露：仅注入名称+触发条件，完整指令通过 skill 工具按需加载）
+	skillContent := c.skillLoader.LoadIndex()
 	if skillContent != "" {
 		promptBuilder.WriteString(skillContent)
 	}
