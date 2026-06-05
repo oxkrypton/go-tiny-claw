@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
@@ -168,12 +169,22 @@ func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolC
 
 // runWithLocks 处理单个工具调用的锁获取 → 执行 → 释放。
 func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, out *schema.ToolResult) {
+	// 开启工具执行的 Span
+	ctx, span := observability.StartSpan(ctx, "Tool.Execute")
+	span.AddAttribute("tool_name", call.Name)
+	// 将 JSON 参数存入以备调试
+	span.AddAttribute("arguments", string(call.Arguments))
+
+	defer span.EndSpan() // 无论成功失败, 确保结束
+
 	tool := r.tools[call.Name]
 
 	// 先走 middleware 审批链，审批通过后再拿锁，避免阻塞期间占住全局锁。
 	for _, mw := range r.middlewares {
 		allowed, reason := mw(ctx, call)
 		if !allowed {
+			span.AddAttribute("intercepted", true)
+			span.AddAttribute("reject_reason", reason)
 			log.Printf("[Registry] ⚠️ 工具 %s 被 Middleware 拦截: %s\n", call.Name, reason)
 			*out = schema.ToolResult{
 				ToolCallID: call.ID,
@@ -192,11 +203,17 @@ func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, o
 		r.lockMgr.global.Lock()
 		defer r.lockMgr.global.Unlock()
 		*out = r.execute(ctx, call, tool)
+		if out.IsError {
+			span.AddAttribute("error", out.Output)
+		} else {
+			span.AddAttribute("output_preview", truncate(out.Output, 100))
+		}
 		return
 	}
 
 	hints, err := hinter.LockHints(call.Arguments)
 	if err != nil {
+		span.AddAttribute("error", err.Error())
 		*out = schema.ToolResult{
 			ToolCallID: call.ID,
 			Output:     fmt.Sprintf("Error: 解析工具参数失败: %v", err),
@@ -224,6 +241,11 @@ func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, o
 	}()
 
 	*out = r.execute(ctx, call, tool)
+	if out.IsError {
+		span.AddAttribute("error", out.Output)
+	} else {
+		span.AddAttribute("output_preview", truncate(out.Output, 100))
+	}
 }
 
 // normalizeHints 把同一调用内的 LockRequest 按 path 升序排序，
@@ -250,4 +272,11 @@ func normalizeHints(hints []LockRequest) []LockRequest {
 	//正序排列 path, 保证相同 path 不会因为顺序不同导致死锁
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+func truncate(s string, max int) string {
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
 }

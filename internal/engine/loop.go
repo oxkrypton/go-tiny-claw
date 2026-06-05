@@ -2,12 +2,11 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 
 	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
@@ -38,14 +37,31 @@ func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *Ag
 func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter Reporter) error {
 	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s (PlanMode: %v)\n", session.ID, session.WorkDir, e.PlanMode)
 
-	turnCount := 0
+	// 开启 Root Span，记录整个任务的生命周期
+	ctx, rootSpan := observability.StartSpan(ctx, "Agent.Run")
+	rootSpan.AddAttribute("SessionID", session.ID)
+	rootSpan.AddAttribute("WorkDir", session.WorkDir)
+
+	// defer 保证在引擎退出时，无论成功失败，都能结束根 Span 并导出 Trace 报告
+	defer func() {
+		rootSpan.EndSpan()
+		_ = observability.ExportTraceToFile(rootSpan, session.WorkDir, session.ID)
+		log.Printf("📊 [Tracing] 本次任务的执行回放链路已保存至工作区的 .claw/traces 目录下\n")
+	}()
 
 	// 根据当前 Session 的工作区，动态组装最新的 System Prompt
 	composer := ctxpkg.NewPromptComposer(session.WorkDir, e.PlanMode)
 	systemMsg := composer.Build()
 
+	turnCount := 0
+
 	// 2. The Main Loop: 心跳开始 (标准的 ReAct 循环)
 	for {
+		turnCount++
+
+		//记录单次 Turn 循环
+		turnCtx, turnSpan := observability.StartSpan(ctx, fmt.Sprintf("Turn-%d", turnCount))
+
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
 
@@ -55,12 +71,17 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 		var contextHistory []schema.Message
 		contextHistory = append(contextHistory, systemMsg)
 		contextHistory = append(contextHistory, workingMemory...)
+		compactedContext := e.compactor.Compact(contextHistory)
 
-		turnCount++
+		// 记录发给模型的实际上下文大小，有助于排查幻觉
+		turnSpan.AddAttribute("context_message_count", len(compactedContext))
 
 		// ================= Action =================
+		//记录 Action 调用
+		actCtx, actSpan := observability.StartSpan(turnCtx, "LLM.Action")
 		// 每一轮都直接注入工具，让模型在同一次响应中决定回复文本或发起工具调用。
-		actionResp, err := e.provider.Generate(ctx, contextHistory, availableTools)
+		actionResp, err := e.provider.Generate(actCtx, compactedContext, availableTools)
+		actSpan.EndSpan() //结束行动跨度
 		if err != nil {
 			return fmt.Errorf("Action 阶段生成失败: %w", err)
 		}
@@ -78,9 +99,8 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 		// 3. 退出条件判断
 		// 如果模型没有请求任何工具调用，说明它认为任务已经完成，跳出循环
 		if len(actionResp.ToolCalls) == 0 {
-			// 将当前轮次的完整 context 写入 session.json，方便调试
-			e.dumpSession(turnCount, session, contextHistory)
-
+			// 结束本轮 Turn 的 Span
+			turnSpan.EndSpan()
 			break
 		}
 
@@ -88,7 +108,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 		// 并行调度与路径锁的细节都收敛在 registry.ExecuteParallel 内：
 		// - 同路径串行（写独占、读共享），跨路径并行
 		// - bash 等无法静态分析路径的工具会拿全局写锁，期间挡住所有文件类工具
-		rawResults := e.registry.ExecuteParallel(ctx, actionResp.ToolCalls, reporter)
+		rawResults := e.registry.ExecuteParallel(turnCtx, actionResp.ToolCalls, reporter)
 
 		// 5. 后处理增强 (Error Recovery + Reminder Injection)
 		// 必须在所有工具结果 append 完之后才能追加 reminder，否则会破坏工具调用协议的消息顺序。
@@ -128,8 +148,8 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 			contextHistory = append(contextHistory, *reminderMsg)
 		}
 
-		// 将本轮完整 context（含 assistant(tool_calls) + tool_results + reminder）写入 session.json
-		e.dumpSession(turnCount, session, contextHistory)
+		// 结束本轮 Turn 的 Span
+		turnSpan.EndSpan()
 		// 循环回到开头，模型将带着这一批新的 Observation 继续它的下一轮思考...
 	}
 
@@ -230,31 +250,4 @@ func (e *AgentEngine) RunSub(ctx context.Context, taskPrompt string, readOnlyReg
 			})
 		}
 	}
-}
-
-// dumpSession 将当前轮次的完整上下文写入 session.json
-func (e *AgentEngine) dumpSession(turn int, session *ctxpkg.Session, history []schema.Message) {
-	type sessionData struct {
-		Turn    int              `json:"turn"`
-		Context []schema.Message `json:"context"`
-	}
-
-	data := sessionData{
-		Turn:    turn,
-		Context: history,
-	}
-
-	jsonBytes, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		log.Printf("[Session] 序列化 context 失败: %v", err)
-		return
-	}
-
-	sessionPath := "session.json"
-	if err := os.WriteFile(sessionPath, jsonBytes, 0644); err != nil {
-		log.Printf("[Session] 写入 session.json 失败: %v", err)
-		return
-	}
-
-	log.Printf("[Session] Turn %d 的完整 context 已写入 session.json", turn)
 }
