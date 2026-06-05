@@ -91,6 +91,7 @@ go test ./internal/tools/ -run TestName -v
 8. **Observability** (`internal/observability/`) — cost tracking and telemetry:
    - `CostTracker` (`tracker.go`): decorator implementing `LLMProvider` that wraps the real provider. Per call, it measures latency, reads `Usage` from the response, computes cost against a hardcoded `PricingModel` map (USD/1M tokens), logs a dashboard line, and calls `session.RecordUsage()` to accumulate totals.
    - Pricing is model-keyed (e.g. `"deepseek-v4-flash": {InputPrice: 0.14, OutputPrice: 0.28}`). Unknown models log zero cost rather than erroring.
+   - `Span` (`trace.go`): tree-structured span tracing via context propagation. `StartSpan(ctx, name)` creates a child span stored in context; the engine records `Agent.Run` (root), `Turn-N`, `LLM.Action`, and `Tool.Execute` spans. `runWithLocks` attaches `tool_name`, `arguments`, and on completion either `error`, `output_preview`, or `intercepted`/`reject_reason` attributes. `ExportTraceToFile` writes the full tree as indented JSON to `.claw/traces/` on session end.
 
 ### Provider switching
 
