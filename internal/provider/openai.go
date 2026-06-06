@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -12,7 +13,7 @@ import (
 )
 
 type OpenAIProvider struct {
-	client openai.Client //值类型，非指针
+	client openai.Client
 	model  string
 }
 
@@ -23,7 +24,8 @@ func NewOpenAIProvider(model string) *OpenAIProvider {
 		client: openai.NewClient(
 			option.WithAPIKey(apiKey),
 			option.WithBaseURL(baseURL),
-			option.WithJSONSet("thinking", map[string]string{"type": "disabled"}),
+			option.WithJSONSet("thinking", map[string]string{"type": "enabled"}),
+			option.WithJSONSet("reasoning_effort", "high"),
 		),
 		model: model,
 	}
@@ -32,24 +34,18 @@ func NewOpenAIProvider(model string) *OpenAIProvider {
 func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, availableTools []schema.ToolDefinition) (*schema.Message, error) {
 	var openaiMsgs []openai.ChatCompletionMessageParamUnion
 
-	//1.翻译上下文信息
 	for _, msg := range msgs {
-		//确定msg身份
 		switch msg.Role {
-		//系统prompt
 		case schema.RoleSystem:
 			openaiMsgs = append(openaiMsgs, openai.SystemMessage(msg.Content))
 
-		//用户信息
 		case schema.RoleUser:
 			if msg.ToolCallID != "" {
-				//v3 新版参数顺序是 (content, toolCallID)
 				openaiMsgs = append(openaiMsgs, openai.ToolMessage(msg.Content, msg.ToolCallID))
 			} else {
 				openaiMsgs = append(openaiMsgs, openai.UserMessage(msg.Content))
 			}
 
-		//大模型信息
 		case schema.RoleAssistant:
 			astParam := openai.ChatCompletionAssistantMessageParam{}
 
@@ -59,11 +55,16 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 				}
 			}
 
-			// 【重要】如果历史包含 ToolCalls，必须原样放回，以维系大模型的逻辑链
+			// 有 ToolCalls 的消息需把 reasoning_content 原样传回
+			if msg.ReasoningContent != "" && len(msg.ToolCalls) > 0 {
+				astParam.SetExtraFields(map[string]any{
+					"reasoning_content": msg.ReasoningContent,
+				})
+			}
+
 			if len(msg.ToolCalls) > 0 {
 				var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
 				for _, tc := range msg.ToolCalls {
-					//OfFunction 对应 GetFunction() ,字段类型严格要求为指针
 					toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 						OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
 							ID:   tc.ID,
@@ -82,19 +83,15 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 				OfAssistant: &astParam,
 			})
 		}
-
 	}
 
-	//2.翻译工具定义 (v3 新 API 特性适配)
 	var openaiTools []openai.ChatCompletionToolUnionParam
 	for _, toolDef := range availableTools {
 		var params shared.FunctionParameters
 
-		// 尝试直接断言，如果不成功则通过 JSON 往返序列化来保证类型匹配
 		if m, ok := toolDef.InputSchema.(map[string]interface{}); ok {
 			params = shared.FunctionParameters(m)
 		} else {
-			// fallback:JSON往返序列化
 			b, _ := json.Marshal(toolDef.InputSchema)
 			_ = json.Unmarshal(b, &params)
 		}
@@ -108,13 +105,11 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 		))
 	}
 
-	//3.构建请求并发送
 	params := openai.ChatCompletionNewParams{
 		Model:    p.model,
 		Messages: openaiMsgs,
 	}
 
-	// 【慢思考机制支撑】仅当 availableTools 存在时才挂载 Tools
 	if len(openaiTools) > 0 {
 		params.Tools = openaiTools
 	}
@@ -127,14 +122,19 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 		return nil, fmt.Errorf("API 返回了空的 Choices")
 	}
 
-	//4.将 API Response 方向翻译为内部的 shcema.Message
 	choice := resp.Choices[0].Message
 	resultMsg := &schema.Message{
 		Role:    schema.RoleAssistant,
 		Content: choice.Content,
 	}
 
-	// 提取 Usage 信息
+	// 提取 DeepSeek 慢思考内容
+	if raw, ok := choice.JSON.ExtraFields["reasoning_content"]; ok {
+		if s, err := strconv.Unquote(raw.Raw()); err == nil {
+			resultMsg.ReasoningContent = s
+		}
+	}
+
 	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
 		resultMsg.Usage = &schema.Usage{
 			PromptTokens:    int(resp.Usage.PromptTokens),
@@ -147,7 +147,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 			resultMsg.ToolCalls = append(resultMsg.ToolCalls, schema.ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
-				Arguments: []byte(tc.Function.Arguments), //提取 JSON 字符串字节
+				Arguments: []byte(tc.Function.Arguments),
 			})
 		}
 	}

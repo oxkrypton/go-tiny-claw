@@ -184,6 +184,14 @@ func (r *FeishuReporter) OnThinking(ctx context.Context) {
 	r.sendMsg("🤔 模型正在慢思考 (Thinking)...")
 }
 
+func (r *FeishuReporter) OnReasoning(ctx context.Context, content string) {
+	// 推理过程可能非常长，截断避免飞书消息过长
+	if len(content) > 500 {
+		content = content[:500] + "...(已截断)"
+	}
+	r.sendMsg(fmt.Sprintf("💭 **推理过程**:\n%s", content))
+}
+
 func (r *FeishuReporter) OnToolCall(ctx context.Context, toolName string, args string) {
 	r.sendMsg(fmt.Sprintf("🛠️ **正在执行工具**：`%s`\n参数：`%s`", toolName, args))
 }

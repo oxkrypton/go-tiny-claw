@@ -17,6 +17,13 @@ func (r *TerminalReporter) OnThinking(ctx context.Context) {
 	fmt.Printf("\n[🤔 思考中] 模型正在推理...\n")
 }
 
+func (r *TerminalReporter) OnReasoning(ctx context.Context, content string) {
+	if content == "" {
+		return
+	}
+	fmt.Printf("\n💭 模型推理过程:\n%s\n", content)
+}
+
 func (r *TerminalReporter) OnToolCall(ctx context.Context, toolName string, args string) {
 	if strings.HasPrefix(toolName, "[Subagent]") {
 		// Subagent 工具调用缩进显示，与主 Agent 形成层次

@@ -87,6 +87,11 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 		}
 
 		// 将大模型的行动响应持久化到 Session 和 contextHistory 中
+
+		// 慢思考过程输出：在纯文本回复前，先展示模型的推理过程
+		if actionResp.ReasoningContent != "" && reporter != nil {
+			reporter.OnReasoning(ctx, actionResp.ReasoningContent)
+		}
 		session.Append(*actionResp)
 		contextHistory = append(contextHistory, *actionResp)
 

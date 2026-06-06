@@ -9,6 +9,9 @@ type Reporter interface {
 	// OnThinking 当模型开始进行慢思考 (Reasoning) 时调用
 	OnThinking(ctx context.Context)
 
+	// OnReasoning 当模型输出慢思考过程文本时调用 (DeepSeek/Claude thinking)
+	OnReasoning(ctx context.Context, content string)
+
 	// OnToolCall 当模型决定并发调用工具时调用
 	OnToolCall(ctx context.Context, toolName string, args string)
 

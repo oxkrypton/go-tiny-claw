@@ -6,16 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **每次提交新功能后，必须检查本文件是否需要更新。** 新增的模块、工具、接口或架构变更都应及时反映在此文档中。提交前将"检查 CLAUDE.md 是否过期"作为必查项。
 
-## 开发辅助
-
-修改 `internal/` 下任何模块前，先查阅 `~/.claude/blueprint/` 对应的设计文档了解约定和陷阱：
-
-| 模块 | Blueprint |
-|------|-----------|
-| `internal/context/` | `~/.claude/blueprint/context.md` |
-| `internal/engine/` | `~/.claude/blueprint/engine.md` |
-| `internal/tools/` | `~/.claude/blueprint/tools.md` |
-
 ## Commands
 
 ```bash
@@ -48,7 +38,7 @@ go test ./internal/tools/ -run TestName -v
    - Appends results as user messages with `ToolCallID` set, preserving the reasoning chain. The loop exits when the model returns zero tool calls.
    - Each turn dumps the full context history to `session.json` for debugging.
    - `RunSub()` provides isolated sub-agent execution (max 10 turns, read-only registry, returns text summary).
-   - `Reporter` interface (`reporter.go`): 4 callbacks (OnThinking, OnToolCall, OnToolResult, OnMessage) for pluggable output. `TerminalReporter` outputs with emoji and hierarchical indentation for sub-agents.
+   - `Reporter` interface (`reporter.go`): 5 callbacks (OnThinking, OnReasoning, OnToolCall, OnToolResult, OnMessage) for pluggable output. `TerminalReporter` outputs with emoji and hierarchical indentation for sub-agents.
    - `ReminderInjector` (`reminder.go`): monitors consecutive tool call failures via MD5 fingerprinting. After 3 identical failures, injects a `RoleUser` intervention message to break dead loops.
 
 3. **Context** (`internal/context/`) — dynamic system prompt assembly, session state, and safety mechanisms:
@@ -60,7 +50,7 @@ go test ./internal/tools/ -run TestName -v
 4. **Provider** (`internal/provider/`) — abstracts LLM backends behind the `LLMProvider` interface (single method: `Generate(ctx, messages, tools) *schema.Message`).
    - Config loading (`API_KEY`, `baseURL`, `.env`) is shared in `config.go` via `loadConfig()`.
    - Both providers extract `Usage` (input/output tokens) from the API response and attach it to the returned `*schema.Message`.
-   - `OpenAIProvider` (`openai.go`): uses `openai-go/v3` SDK, translates internal `schema.Message` to OpenAI API format. Thinking mode disabled.
+   - `OpenAIProvider` (`openai.go`): uses `openai-go/v3` SDK, translates internal `schema.Message` to OpenAI API format. Thinking mode enabled by default (DeepSeek `reasoning_content` extracted into `Message.ReasoningContent`, re-injected on multi-turn tool calls).
    - `ClaudeProvider` (`claude.go`): uses `anthropic-sdk-go`, sends system prompt separately, translates ToolUseBlock/ToolResultBlock.
 
 5. **Tools** (`internal/tools/`) — `Registry` maps tool names to `BaseTool` implementations.
@@ -82,7 +72,7 @@ go test ./internal/tools/ -run TestName -v
    - `ApprovalManager` (`approval.go`): sends interactive approval cards (approve/deny buttons) for dangerous commands. Auto-rejects on timeout. `IsDangerousCommand` uses regex to detect risky operations.
 
 7. **Schema** (`internal/schema/`) — domain types shared across all layers:
-   - `Message`: Role + Content + optional ToolCalls (assistant) / ToolCallID (user tool results).
+   - `Message`: Role + Content + optional ToolCalls (assistant) / ToolCallID (user tool results) + optional ReasoningContent (assistant thinking trace).
    - `ToolCall`: ID, Name, Arguments (json.RawMessage).
    - `ToolResult`: ToolCallID, Output, ErrorCode, IsError.
    - `ToolError` (`errors.go`): structured error with `Code` (ErrorCode), `Message`, `Cause`. Implements `Unwrap()` for error chain support.
@@ -95,7 +85,7 @@ go test ./internal/tools/ -run TestName -v
 
 ### Provider switching
 
-The `LLMProvider` interface lets you swap backends without changing the engine or tools. Pass either `NewOpenAIProvider(model)` or `NewClaudeProvider(model)` when constructing the engine. Thinking mode is currently disabled via `option.WithJSONSet("thinking", ...)`.
+The `LLMProvider` interface lets you swap backends without changing the engine or tools. Pass either `NewOpenAIProvider(model)` or `NewClaudeProvider(model)` when constructing the engine.
 
 ### Tool sandboxing
 
