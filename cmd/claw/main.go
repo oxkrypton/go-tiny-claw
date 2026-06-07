@@ -33,10 +33,14 @@ func main() {
 	// 注入的工具注册表
 	registry := tools.NewRegistry()
 
+	// 后台任务管理器（主工具表和只读表共享）
+	bgManager := tools.NewBackgroundTaskManager(workDir)
+	defer bgManager.Cleanup()
+
 	// 子智能体只准备受限的只读注册表
 	readOnlyRegistry := tools.NewRegistry()
 	readOnlyRegistry.Register(tools.NewReadFileTool(workDir))
-	readOnlyRegistry.Register(tools.NewBashTool(workDir))
+	readOnlyRegistry.Register(tools.NewBashTool(workDir, bgManager))
 
 	reporter := engine.NewTerminalReporter()
 
@@ -46,7 +50,7 @@ func main() {
 	// 挂载 5 大基础工具
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
-	registry.Register(tools.NewBashTool(workDir))
+	registry.Register(tools.NewBashTool(workDir, bgManager))
 	registry.Register(tools.NewEditFileTool(workDir))
 	//将subagent功能注入
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
@@ -54,10 +58,8 @@ func main() {
 	registry.Register(tools.NewSkillTool(workDir))
 
 	prompt := `
-	为了加快执行速度，请你在一轮回复中，【同时并行】完成以下两件事： 
-	1. 使用 bash 工具执行 'sleep 2 && echo "系统环境检查完毕"' 
-	2. 使用 write_file 工具，在当前目录下创建一个 'trace_test.md'，内容写上 "测试并发的写入"。 
-	请确保你是分别调用两个不同的工具，不要试图把它们合并成一个命令！
+	在当前工作区有一个main.go(极简的go web 服务)
+	你只需将bash工具的所有功能测试一遍
 `
 	log.Println("\n>>> 🚀 启动测试...")
 	sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})

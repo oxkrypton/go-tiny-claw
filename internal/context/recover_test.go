@@ -41,8 +41,8 @@ func TestRecoveryManager_FileNotFound(t *testing.T) {
 func TestRecoveryManager_CommandTimeout(t *testing.T) {
 	rm := NewRecoveryManager()
 	out := rm.AnalyzeAndInject("bash", "执行工具 bash 失败: [COMMAND_TIMEOUT] 超时", schema.ErrCommandTimeout)
-	if !strings.Contains(out, "nohup") || !strings.Contains(out, "后台") {
-		t.Fatal("hint should mention nohup and background, got:", out)
+	if !strings.Contains(out, "background:true") {
+		t.Fatal("hint should mention background:true, got:", out)
 	}
 }
 

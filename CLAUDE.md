@@ -28,7 +28,7 @@ go test ./internal/tools/ -run TestName -v
 
 ### Layer model (top → bottom)
 
-1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `context.GlobalSessionMgr`, registers all 6 tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry, then calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
+1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `context.GlobalSessionMgr`, a shared `BackgroundTaskManager`, then registers all tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry. The `BackgroundTaskManager` is injected into both `BashTool` instances and its `Cleanup()` is deferred on exit. Calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
 
 2. **Engine** (`internal/engine/`) — the core ReAct loop in `loop.go`. Each turn:
    - Builds context from dynamic system prompt (via `context.PromptComposer`) + working memory (last 20 messages from `context.Session`).
@@ -63,7 +63,7 @@ go test ./internal/tools/ -run TestName -v
      - `read_file` — reads file content with `start_line`/`end_line` range. Truncated at 50KB.
      - `write_file` — creates or overwrites files. Auto-creates parent directories.
      - `edit_file` — exact string replacement. Two-pass algorithm: L1 exact match → L2 newline-normalized fallback. Returns structured errors (`ErrOldTextNotFound` / `ErrOldTextAmbiguous`).
-     - `bash` — executes shell commands with 30s timeout. Output truncated at 30KB.
+     - `bash` — foreground + background task management. Default `action=run` with 30s timeout. New params: `background` (bool, use `true` to start persistent services without blocking), `task_id` (optional identifier, auto-generated), `action` (one of `run`/`list`/`status`/`logs`/`stop`), `lines` (for `logs`, default 80). `background:true` starts the process via `cmd.Start()` with `Setpgid: true` (independent process group) and immediately returns task ID/PID/log path. Logs write to `.claw/run/<task_id>.log` under the workDir. `stop` kills the entire process group via `syscall.Kill(-pgid, SIGKILL)`, preventing orphan child processes. The `BackgroundTaskManager` (map + `sync.Mutex`, `internal/tools/bgmanager.go`) is shared between main and read-only `BashTool` instances, with `Cleanup()` deferred in `main` to stop all running tasks on exit. Timeout recovery hints reference `background:true` instead of `nohup`.
      - `spawn_subagent` (`subagent.go`) — delegates exploration to an isolated sub-agent with read-only tools (read_file + bash). Uses `AgentRunner` interface to avoid circular imports.
      - `skill` (`skill.go`) — loads a skill's full SKILL.md body on demand by name. Part of the progressive disclosure pattern: the system prompt only carries a compact index, and the model calls this tool when a skill matches the current task.
 
@@ -89,7 +89,7 @@ The `LLMProvider` interface lets you swap backends without changing the engine o
 
 ### Tool sandboxing
 
-All tools receive the engine's `workDir` and resolve paths relative to it. Bash commands run under a 30-second timeout, output truncated at 30KB. File reads are truncated at 50KB. The `PathLockManager` ensures safe concurrent access: same-path operations serialize, cross-path operations run in parallel, and bash operations globally exclude file operations.
+All tools receive the engine's `workDir` and resolve paths relative to it. Foreground bash commands run under a 30-second timeout, output truncated at 30KB. Background bash tasks (`background:true`) bypass the timeout and run independently. File reads are truncated at 50KB. The `PathLockManager` ensures safe concurrent access: same-path operations serialize, cross-path operations run in parallel, and bash operations globally exclude file operations.
 
 ### Self-healing mechanisms
 
@@ -101,3 +101,4 @@ Three built-in safeguards prevent the agent from getting stuck:
 ### Auxiliary tools
 
 - `cmd/split_log/` — standalone utility that splits a large log file into 100-line shards.
+- `testdata/miniserve/` — minimal Go HTTP server (`/ping`, `/hello`) used for integration-testing background task management.

@@ -48,7 +48,7 @@ func (rm *RecoveryManager) hintByCode(code schema.ErrorCode) string {
 	case schema.ErrOldTextAmbiguous:
 		return "你的 old_text 不够具体，命中了多个相同代码块。请在 old_text 中增加上下相邻的几行代码，以确保替换的唯一性。"
 	case schema.ErrCommandTimeout:
-		return "该命令执行被超时强杀。如果它是一个常驻服务（如 server 或 watch），请将其转入后台执行（例如使用 `nohup ... &`），不要阻塞主线程。"
+		return "该命令执行被超时强杀。如果它是一个常驻服务（如 server 或 watch），请使用 background:true 参数将其作为后台任务启动，避免阻塞主循环。"
 	default:
 		return ""
 	}
@@ -77,7 +77,7 @@ func (rm *RecoveryManager) hintByPattern(toolName string, rawError string) strin
 		if strings.Contains(lowerError, "command not found") {
 			return "系统中未安装该命令。请先思考：是否有替代命令？或者你需要先编写脚本进行安装？"
 		} else if strings.Contains(rawError, "超时") || strings.Contains(rawError, "DeadlineExceeded") {
-			return "该命令执行被超时强杀。如果它是一个常驻服务（如 server 或 watch），请将其转入后台执行（例如使用 `nohup ... &`），不要阻塞主线程。"
+			return "该命令执行被超时强杀。如果它是一个常驻服务（如 server 或 watch），请使用 background:true 参数将其作为后台任务启动，避免阻塞主循环。"
 		} else if strings.Contains(lowerError, "syntax error") {
 			return "Bash 语法错误。请检查引号转义或特殊字符，确保命令在终端中可直接运行。"
 		}
