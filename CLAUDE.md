@@ -20,6 +20,9 @@ go test ./...
 
 # Test a single package
 go test ./internal/tools/ -run TestName -v
+
+# Run benchmark suite
+go run ./cmd/bench/
 ```
 
 ## Architecture
@@ -97,6 +100,10 @@ Three built-in safeguards prevent the agent from getting stuck:
 - **RecoveryManager**: on tool error, appends Chinese-language hints matched by error code.
 - **ReminderInjector**: after 3 consecutive identical failures (fingerprinted by MD5 of normalized args), injects an intervention message.
 - **Compactor**: when context exceeds 20,000 chars, compresses old history to prevent OOM.
+
+### Eval / Benchmark (`internal/eval/`, `cmd/bench/`)
+
+Harness-driven Agent evaluation. `BenchmarkRunner` takes a list of `TestCase` (setup script → task prompt → validate script), runs each in an isolated workDir under `testdata/benchmark/`, and prints a pass/fail report with cost and latency per case.
 
 ### Auxiliary tools
 

@@ -45,8 +45,11 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 	// defer 保证在引擎退出时，无论成功失败，都能结束根 Span 并导出 Trace 报告
 	defer func() {
 		rootSpan.EndSpan()
-		_ = observability.ExportTraceToFile(rootSpan, session.WorkDir, session.ID)
-		log.Printf("📊 [Tracing] 本次任务的执行回放链路已保存至工作区的 .claw/traces 目录下\n")
+		if err := observability.ExportTraceToFile(rootSpan, session.WorkDir, session.ID); err != nil {
+			log.Printf("⚠️ [Tracing] 导出 Trace 失败: %v\n", err)
+		} else {
+			log.Printf("📊 [Tracing] 本次任务的执行回放链路已保存至工作区的 .claw/traces 目录下\n")
+		}
 	}()
 
 	// 根据当前 Session 的工作区，动态组装最新的 System Prompt

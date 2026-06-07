@@ -61,7 +61,9 @@ func (s *Span) AddAttribute(key string, value interface{}) {
 // ExportTraceToFile 当整个根 Span 结束时，将其序列化并保存为本地 JSON 文件
 func ExportTraceToFile(rootSpan *Span, workDir string, sessionID string) error {
 	traceDir := filepath.Join(workDir, ".claw", "traces")
-	os.MkdirAll(traceDir, 0755)
+	if err := os.MkdirAll(traceDir, 0755); err != nil {
+		return fmt.Errorf("trace dir create: %w", err)
+	}
 
 	filename := filepath.Join(traceDir, fmt.Sprintf("trace_%s_%d.json", sessionID, time.Now().Unix()))
 
