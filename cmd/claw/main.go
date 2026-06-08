@@ -17,7 +17,6 @@ import (
 func main() {
 	//获取工作区
 	workDir, _ := os.Getwd()
-	workDir += "/testdata"
 
 	modelName := "deepseek-v4-flash"
 

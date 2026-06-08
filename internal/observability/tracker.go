@@ -58,7 +58,7 @@ func (t *CostTracker) Generate(ctx context.Context, msgs []schema.Message, avail
 
 		var cost float64
 		if price, exists := PricingModel[t.modelName]; exists {
-			// 计算美元花费 = (输入Tokens * 输入单价 + 输出Tokens * 输出单价) / 1000000
+			// 计算花费 = (输入Tokens * 输入单价 + 输出Tokens * 输出单价) / 1000000
 			cost = (float64(promptTokens)*price.InputPrice + float64(completionTokens)*price.OutputPrice) / 1000000.0
 		}
 

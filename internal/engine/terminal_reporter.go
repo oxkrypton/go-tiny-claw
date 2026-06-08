@@ -13,10 +13,6 @@ func NewTerminalReporter() *TerminalReporter {
 	return &TerminalReporter{}
 }
 
-func (r *TerminalReporter) OnThinking(ctx context.Context) {
-	fmt.Printf("\n[🤔 思考中] 模型正在推理...\n")
-}
-
 func (r *TerminalReporter) OnReasoning(ctx context.Context, content string) {
 	if content == "" {
 		return
