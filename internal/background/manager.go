@@ -1,4 +1,4 @@
-package tools
+package background
 
 import (
 	"fmt"
@@ -19,8 +19,8 @@ const (
 	TaskExited  TaskStatus = "exited"
 )
 
-// BackgroundTask 记录单个后台任务的元信息
-type BackgroundTask struct {
+// Task 记录单个后台任务的元信息
+type Task struct {
 	TaskID    string
 	PID       int
 	Command   string
@@ -32,20 +32,20 @@ type BackgroundTask struct {
 	cmd *exec.Cmd // 内部持有，用于 Stop 时杀进程组
 }
 
-// BackgroundTaskManager 管理同一次 agent 进程内的所有后台任务
-type BackgroundTaskManager struct {
+// TaskManager 管理同一次 agent 进程内的所有后台任务
+type TaskManager struct {
 	mu      sync.Mutex
-	tasks   map[string]*BackgroundTask
+	tasks   map[string]*Task
 	workDir string
 	counter int
 }
 
 const maxTaskIDLen = 64
 
-// NewBackgroundTaskManager 创建一个新的后台任务管理器
-func NewBackgroundTaskManager(workDir string) *BackgroundTaskManager {
-	return &BackgroundTaskManager{
-		tasks:   make(map[string]*BackgroundTask),
+// NewTaskManager 创建一个新的后台任务管理器
+func NewTaskManager(workDir string) *TaskManager {
+	return &TaskManager{
+		tasks:   make(map[string]*Task),
 		workDir: workDir,
 	}
 }
@@ -65,13 +65,13 @@ func ValidateTaskID(id string) error {
 }
 
 // generateID 自动生成一个唯一的 task_id
-func (m *BackgroundTaskManager) generateID() string {
+func (m *TaskManager) generateID() string {
 	m.counter++
 	return fmt.Sprintf("task-%d", m.counter)
 }
 
 // Start 启动一个后台任务，立即返回其元信息
-func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, error) {
+func (m *TaskManager) Start(taskID, command string) (*Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -85,14 +85,12 @@ func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, 
 		return nil, fmt.Errorf("task_id '%s' 已存在，请换一个名称或先停止旧任务", taskID)
 	}
 
-	// 创建日志目录 <workDir>/.claw/run/
 	logDir := filepath.Join(m.workDir, ".claw", "run")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建日志目录失败: %w", err)
 	}
 	logFile := filepath.Join(logDir, taskID+".log")
 
-	// 打开日志文件
 	f, err := os.Create(logFile)
 	if err != nil {
 		return nil, fmt.Errorf("创建日志文件失败: %w", err)
@@ -102,8 +100,6 @@ func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, 
 	cmd.Dir = m.workDir
 	cmd.Stdout = f
 	cmd.Stderr = f
-
-	// 独立进程组：停止时可以杀整个进程树
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -111,7 +107,7 @@ func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, 
 		return nil, fmt.Errorf("启动后台任务失败: %w", err)
 	}
 
-	task := &BackgroundTask{
+	task := &Task{
 		TaskID:    taskID,
 		PID:       cmd.Process.Pid,
 		Command:   command,
@@ -122,7 +118,6 @@ func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, 
 	}
 	m.tasks[taskID] = task
 
-	// 后台 goroutine 等待进程结束，更新状态
 	go func() {
 		err := cmd.Wait()
 		m.mu.Lock()
@@ -142,7 +137,7 @@ func (m *BackgroundTaskManager) Start(taskID, command string) (*BackgroundTask, 
 }
 
 // Get 按 task_id 获取任务，不存在时返回 false
-func (m *BackgroundTaskManager) Get(taskID string) (*BackgroundTask, bool) {
+func (m *TaskManager) Get(taskID string) (*Task, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.tasks[taskID]
@@ -150,10 +145,10 @@ func (m *BackgroundTaskManager) Get(taskID string) (*BackgroundTask, bool) {
 }
 
 // List 返回当前所有后台任务的切片
-func (m *BackgroundTaskManager) List() []*BackgroundTask {
+func (m *TaskManager) List() []*Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]*BackgroundTask, 0, len(m.tasks))
+	out := make([]*Task, 0, len(m.tasks))
 	for _, t := range m.tasks {
 		out = append(out, t)
 	}
@@ -161,7 +156,7 @@ func (m *BackgroundTaskManager) List() []*BackgroundTask {
 }
 
 // Stop 终止指定后台任务的整个进程组
-func (m *BackgroundTaskManager) Stop(taskID string) error {
+func (m *TaskManager) Stop(taskID string) error {
 	m.mu.Lock()
 	task, ok := m.tasks[taskID]
 	if !ok {
@@ -174,7 +169,6 @@ func (m *BackgroundTaskManager) Stop(taskID string) error {
 		return fmt.Errorf("后台任务 '%s' 没有可停止的进程", taskID)
 	}
 
-	// 杀整个进程组（负数 PID 表示进程组），与 Setpgid: true 配对
 	if err := syscall.Kill(-task.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		m.mu.Unlock()
 		return fmt.Errorf("停止后台任务失败: %w", err)
@@ -185,9 +179,8 @@ func (m *BackgroundTaskManager) Stop(taskID string) error {
 	return nil
 }
 
-// IsAlive 检查进程是否仍存活。优先看状态字段（Stop/Cleanup 同步写入），
-// 再回退到信号 0 探测，避免僵尸进程的竞态窗口。
-func (m *BackgroundTaskManager) IsAlive(taskID string) bool {
+// IsAlive 检查进程是否仍存活
+func (m *TaskManager) IsAlive(taskID string) bool {
 	m.mu.Lock()
 	task, ok := m.tasks[taskID]
 	m.mu.Unlock()
@@ -201,16 +194,14 @@ func (m *BackgroundTaskManager) IsAlive(taskID string) bool {
 }
 
 // Cleanup 停止所有正在运行的后台任务，进程退出前调用
-func (m *BackgroundTaskManager) Cleanup() {
+func (m *TaskManager) Cleanup() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for taskID, task := range m.tasks {
+	for _, task := range m.tasks {
 		if task.Status != TaskRunning || task.cmd == nil || task.cmd.Process == nil {
 			continue
 		}
-		syscall.Kill(-task.cmd.Process.Pid, syscall.SIGKILL)
+		_ = syscall.Kill(-task.cmd.Process.Pid, syscall.SIGKILL)
 		task.Status = TaskExited
-		// 用 _ 忽略 kill 错误，cleanup 不报错
-		_ = taskID
 	}
 }

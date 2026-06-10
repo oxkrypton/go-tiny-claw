@@ -1,4 +1,4 @@
-package observability
+package trace
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// traceKey 是 Context 中存放 Span 的专属 Key
-type traceKey struct{}
+// contextKey 是 Context 中存放 Span 的专属 Key。
+type contextKey struct{}
 
-// Span 代表链路追踪中的一个时间跨度和操作节点
+// Span 代表链路追踪中的一个时间跨度和操作节点。
 type Span struct {
 	Name       string                 `json:"name"`
 	StartTime  time.Time              `json:"start_time"`
@@ -25,7 +25,7 @@ type Span struct {
 	mu sync.Mutex // 保护 children 的并发写入
 }
 
-// StartSpan 开启一个新的追踪跨度，并将其级联到 Context 中
+// StartSpan 开启一个新的追踪跨度，并将其级联到 Context 中。
 func StartSpan(ctx context.Context, name string) (context.Context, *Span) {
 	span := &Span{
 		Name:       name,
@@ -34,32 +34,32 @@ func StartSpan(ctx context.Context, name string) (context.Context, *Span) {
 	}
 
 	// 从 context 中尝试获取父 Span
-	if parent, ok := ctx.Value(traceKey{}).(*Span); ok {
+	if parent, ok := ctx.Value(contextKey{}).(*Span); ok {
 		parent.mu.Lock()
 		parent.Children = append(parent.Children, span)
 		parent.mu.Unlock()
 	}
 
 	// 将当前新创建的 Span 作为最新的父节点, 塞入衍生 Context 并返回
-	newCtx := context.WithValue(ctx, traceKey{}, span)
+	newCtx := context.WithValue(ctx, contextKey{}, span)
 	return newCtx, span
 }
 
-// EndSpan 结束跨度，计算耗时
+// EndSpan 结束跨度，计算耗时。
 func (s *Span) EndSpan() {
 	s.EndTime = time.Now()
 	s.DurationMs = s.EndTime.Sub(s.StartTime).Milliseconds()
 }
 
-// AddAttribute 为当前 Span 记录关键的元数据
+// AddAttribute 为当前 Span 记录关键的元数据。
 func (s *Span) AddAttribute(key string, value interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Attributes[key] = value
 }
 
-// ExportTraceToFile 当整个根 Span 结束时，将其序列化并保存为本地 JSON 文件
-func ExportTraceToFile(rootSpan *Span, workDir string, sessionID string) error {
+// ExportToFile 当整个根 Span 结束时，将其序列化并保存为本地 JSON 文件。
+func ExportToFile(rootSpan *Span, workDir string, sessionID string) error {
 	traceDir := filepath.Join(workDir, ".claw", "traces")
 	if err := os.MkdirAll(traceDir, 0755); err != nil {
 		return fmt.Errorf("trace dir create: %w", err)

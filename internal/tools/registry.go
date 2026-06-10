@@ -10,8 +10,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
 
 // BaseTool 是所有具体工具必须实现的通用接口
@@ -68,14 +68,14 @@ type registryImpl struct {
 	//使用 map 以工具的 name 作为 key 进行快速 O(1) 路由查找
 	tools       map[string]BaseTool
 	middlewares []MiddlewareFunc
-	lockMgr     *PathLockManager
+	lockMgr     *pathLockManager
 }
 
 func NewRegistry() Registry {
 	return &registryImpl{
 		tools:       make(map[string]BaseTool),
 		middlewares: make([]MiddlewareFunc, 0),
-		lockMgr:     NewPathLockManager(),
+		lockMgr:     newPathLockManager(),
 	}
 }
 
@@ -170,7 +170,7 @@ func (r *registryImpl) ExecuteParallel(ctx context.Context, calls []schema.ToolC
 // runWithLocks 处理单个工具调用的锁获取 → 执行 → 释放。
 func (r *registryImpl) runWithLocks(ctx context.Context, call schema.ToolCall, out *schema.ToolResult) {
 	// 开启工具执行的 Span
-	ctx, span := observability.StartSpan(ctx, "Tool.Execute")
+	ctx, span := trace.StartSpan(ctx, "Tool.Execute")
 	span.AddAttribute("tool_name", call.Name)
 	// 将 JSON 参数存入以备调试
 	span.AddAttribute("arguments", string(call.Arguments))

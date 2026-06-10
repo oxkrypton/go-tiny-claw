@@ -6,10 +6,10 @@ import (
 	"log"
 
 	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
-	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
+	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
 
 // AgentEngine 是微型 OS 的核心驱动
@@ -38,14 +38,14 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s (PlanMode: %v)\n", session.ID, session.WorkDir, e.PlanMode)
 
 	// 开启 Root Span，记录整个任务的生命周期
-	ctx, rootSpan := observability.StartSpan(ctx, "Agent.Run")
+	ctx, rootSpan := trace.StartSpan(ctx, "Agent.Run")
 	rootSpan.AddAttribute("SessionID", session.ID)
 	rootSpan.AddAttribute("WorkDir", session.WorkDir)
 
 	// defer 保证在引擎退出时，无论成功失败，都能结束根 Span 并导出 Trace 报告
 	defer func() {
 		rootSpan.EndSpan()
-		if err := observability.ExportTraceToFile(rootSpan, session.WorkDir, session.ID); err != nil {
+		if err := trace.ExportToFile(rootSpan, session.WorkDir, session.ID); err != nil {
 			log.Printf("⚠️ [Tracing] 导出 Trace 失败: %v\n", err)
 		} else {
 			log.Printf("📊 [Tracing] 本次任务的执行回放链路已保存至工作区的 .claw/traces 目录下\n")
@@ -63,7 +63,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 		turnCount++
 
 		//记录单次 Turn 循环
-		turnCtx, turnSpan := observability.StartSpan(ctx, fmt.Sprintf("Turn-%d", turnCount))
+		turnCtx, turnSpan := trace.StartSpan(ctx, fmt.Sprintf("Turn-%d", turnCount))
 
 		// 获取当前挂载的所有工具定义
 		availableTools := e.registry.GetAvailableTools()
@@ -81,7 +81,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 
 		// ================= Action =================
 		//记录 Action 调用
-		actCtx, actSpan := observability.StartSpan(turnCtx, "LLM.Action")
+		actCtx, actSpan := trace.StartSpan(turnCtx, "LLM.Action")
 		// 每一轮都直接注入工具，让模型在同一次响应中决定回复文本或发起工具调用。
 		actionResp, err := e.provider.Generate(actCtx, compactedContext, availableTools)
 		actSpan.EndSpan() //结束行动跨度

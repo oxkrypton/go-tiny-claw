@@ -5,11 +5,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oxkrypton/go-tiny-claw/internal/background"
 )
 
 func TestBash_Foreground_Output(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	out, err := tool.Execute(context.Background(), jsonArg(`{"command":"echo hello world"}`))
@@ -23,7 +25,7 @@ func TestBash_Foreground_Output(t *testing.T) {
 
 func TestBash_Foreground_Timeout(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	// 30s+ 的命令会触发超时
@@ -39,7 +41,7 @@ func TestBash_Foreground_Timeout(t *testing.T) {
 
 func TestBash_Background_ImmediateReturn(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	out, err := tool.Execute(context.Background(), jsonArg(`{"command":"sleep 10","background":true,"task_id":"test-sleep"}`))
@@ -65,7 +67,7 @@ func TestBash_Background_ImmediateReturn(t *testing.T) {
 
 func TestBash_AutoGenerateTaskID(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	out, err := tool.Execute(context.Background(), jsonArg(`{"command":"sleep 3","background":true}`))
@@ -81,7 +83,7 @@ func TestBash_AutoGenerateTaskID(t *testing.T) {
 
 func TestBash_List_Empty(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	out, err := tool.Execute(context.Background(), jsonArg(`{"action":"list"}`))
@@ -95,7 +97,7 @@ func TestBash_List_Empty(t *testing.T) {
 
 func TestBash_List_WithTasks(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	bgMgr.Start("task-a", "sleep 5")
@@ -117,7 +119,7 @@ func TestBash_List_WithTasks(t *testing.T) {
 
 func TestBash_Status_Running(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	tool.Execute(context.Background(), jsonArg(`{"command":"sleep 30","background":true,"task_id":"status-test"}`))
@@ -137,7 +139,7 @@ func TestBash_Status_Running(t *testing.T) {
 
 func TestBash_Status_Exited(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	tool.Execute(context.Background(), jsonArg(`{"command":"echo done","background":true,"task_id":"short-task"}`))
@@ -156,7 +158,7 @@ func TestBash_Status_Exited(t *testing.T) {
 
 func TestBash_Logs_WithOutput(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	tool.Execute(context.Background(), jsonArg(`{"command":"echo hello-from-bg && echo line2","background":true,"task_id":"log-test"}`))
@@ -176,7 +178,7 @@ func TestBash_Logs_WithOutput(t *testing.T) {
 
 func TestBash_Logs_DefaultLines(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	tool.Execute(context.Background(), jsonArg(`{"command":"echo testline","background":true,"task_id":"log-def"}`))
@@ -193,7 +195,7 @@ func TestBash_Logs_DefaultLines(t *testing.T) {
 
 func TestBash_Stop_Running(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	tool.Execute(context.Background(), jsonArg(`{"command":"sleep 60","background":true,"task_id":"kill-me"}`))
@@ -213,7 +215,7 @@ func TestBash_Stop_Running(t *testing.T) {
 
 func TestBash_Status_Nonexistent(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"action":"status","task_id":"no-such-task"}`))
@@ -227,7 +229,7 @@ func TestBash_Status_Nonexistent(t *testing.T) {
 
 func TestBash_Logs_Nonexistent(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"action":"logs","task_id":"no-such-task"}`))
@@ -241,7 +243,7 @@ func TestBash_Logs_Nonexistent(t *testing.T) {
 
 func TestBash_Stop_Nonexistent(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"action":"stop","task_id":"no-such-task"}`))
@@ -255,7 +257,7 @@ func TestBash_Stop_Nonexistent(t *testing.T) {
 
 func TestBash_InvalidAction(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"action":"foobar"}`))
@@ -270,7 +272,7 @@ func TestBash_InvalidAction(t *testing.T) {
 func TestBash_TaskID_RejectSpecialChars(t *testing.T) {
 	invalidIDs := []string{"a/b", "a\\b", "..", "../escape"}
 	for _, id := range invalidIDs {
-		err := ValidateTaskID(id)
+		err := background.ValidateTaskID(id)
 		if err == nil {
 			t.Errorf("expected validation error for task_id '%s'", id)
 		}
@@ -279,7 +281,7 @@ func TestBash_TaskID_RejectSpecialChars(t *testing.T) {
 
 func TestBash_TaskID_RejectEmpty(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	// status 不填 task_id 应该报错
@@ -291,7 +293,7 @@ func TestBash_TaskID_RejectEmpty(t *testing.T) {
 
 func TestBash_Run_NoCommand(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"action":"run"}`))
@@ -305,7 +307,7 @@ func TestBash_Run_NoCommand(t *testing.T) {
 
 func TestBash_Background_NoCommand(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	_, err := tool.Execute(context.Background(), jsonArg(`{"background":true}`))
@@ -319,7 +321,7 @@ func TestBash_Background_NoCommand(t *testing.T) {
 
 func TestBash_ShortCommand_NoOutput(t *testing.T) {
 	dir := t.TempDir()
-	bgMgr := NewBackgroundTaskManager(dir)
+	bgMgr := background.NewTaskManager(dir)
 	tool := NewBashTool(dir, bgMgr)
 
 	out, err := tool.Execute(context.Background(), jsonArg(`{"command":"mkdir -p subdir"}`))

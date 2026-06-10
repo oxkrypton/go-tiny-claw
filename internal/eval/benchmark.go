@@ -8,9 +8,10 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/oxkrypton/go-tiny-claw/internal/background"
 	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/cost"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
-	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
@@ -97,13 +98,13 @@ func (b *BenchmarkRunner) runSingleTest(ctx context.Context, tc TestCase) TestRe
 	// 初始化真实的 Provider大脑
 	llmProvider := provider.NewOpenAIProvider(b.modelName)
 
-	trackedProvider := observability.NewCostTracker(llmProvider, b.modelName, session)
+	trackedProvider := cost.NewTracker(llmProvider, b.modelName, session)
 
 	// 注入的工具注册表
 	registry := tools.NewRegistry()
 
 	// 后台任务管理器（主工具表和只读表共享）
-	bgManager := tools.NewBackgroundTaskManager(workDir)
+	bgManager := background.NewTaskManager(workDir)
 	defer bgManager.Cleanup()
 
 	// 子智能体只准备受限的只读注册表

@@ -9,17 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxkrypton/go-tiny-claw/internal/background"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
 // BashTool 执行 bash 命令，支持前台同步执行和后台任务管理
 type BashTool struct {
 	workDir   string
-	bgManager *BackgroundTaskManager
+	bgManager *background.TaskManager
 }
 
-// NewBashTool 创建一个新的 BashTool，接收共享的 BackgroundTaskManager
-func NewBashTool(workDir string, bgManager *BackgroundTaskManager) *BashTool {
+// NewBashTool 创建一个新的 BashTool，接收共享的后台任务管理器
+func NewBashTool(workDir string, bgManager *background.TaskManager) *BashTool {
 	return &BashTool{workDir: workDir, bgManager: bgManager}
 }
 
@@ -190,7 +191,7 @@ func (t *BashTool) listTasks() (string, error) {
 
 // taskStatus 查看指定任务状态
 func (t *BashTool) taskStatus(taskID string) (string, error) {
-	if err := ValidateTaskID(taskID); err != nil {
+	if err := background.ValidateTaskID(taskID); err != nil {
 		return "", schema.NewToolError(schema.ErrInvalidArguments,
 			fmt.Sprintf("task_id 无效: %v", err), err)
 	}
@@ -224,7 +225,7 @@ func (t *BashTool) taskStatus(taskID string) (string, error) {
 
 // taskLogs 读取后台任务日志末尾内容
 func (t *BashTool) taskLogs(taskID string, lines int) (string, error) {
-	if err := ValidateTaskID(taskID); err != nil {
+	if err := background.ValidateTaskID(taskID); err != nil {
 		return "", schema.NewToolError(schema.ErrInvalidArguments,
 			fmt.Sprintf("task_id 无效: %v", err), err)
 	}
@@ -264,7 +265,7 @@ func (t *BashTool) taskLogs(taskID string, lines int) (string, error) {
 
 // stopTask 停止一个后台任务
 func (t *BashTool) stopTask(taskID string) (string, error) {
-	if err := ValidateTaskID(taskID); err != nil {
+	if err := background.ValidateTaskID(taskID); err != nil {
 		return "", schema.NewToolError(schema.ErrInvalidArguments,
 			fmt.Sprintf("task_id 无效: %v", err), err)
 	}

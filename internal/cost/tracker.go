@@ -1,4 +1,4 @@
-package observability
+package cost
 
 import (
 	"context"
@@ -19,23 +19,23 @@ var PricingModel = map[string]struct {
 	"deepseek-v4-flash": {InputPrice: 0.14, OutputPrice: 0.28}, //(1m Token 价格)
 }
 
-// CostTracker 是一个包装了真实 LLMProvider 的装饰器中间件
-type CostTracker struct {
+// Tracker 是一个包装了真实 LLMProvider 的装饰器中间件。
+type Tracker struct {
 	nextProvider provider.LLMProvider
 	modelName    string
 	session      *ctxpkg.Session //当前所属的对话(用于累加总成本)
 }
 
-// NewCostTracker 构造函数：接收一个现有的 Provider，返回一个被监控的 Provider
-func NewCostTracker(next provider.LLMProvider, modelName string, session *ctxpkg.Session) *CostTracker {
-	return &CostTracker{
+// NewTracker 接收一个现有的 Provider，返回一个被监控的 Provider。
+func NewTracker(next provider.LLMProvider, modelName string, session *ctxpkg.Session) *Tracker {
+	return &Tracker{
 		nextProvider: next,
 		modelName:    modelName,
 		session:      session,
 	}
 }
 
-func (t *CostTracker) Generate(ctx context.Context, msgs []schema.Message, availableTools []schema.ToolDefinition) (*schema.Message, error) {
+func (t *Tracker) Generate(ctx context.Context, msgs []schema.Message, availableTools []schema.ToolDefinition) (*schema.Message, error) {
 	// 1. 记录请求发起的时间
 	startTime := time.Now()
 

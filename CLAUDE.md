@@ -31,7 +31,7 @@ go run ./cmd/bench/
 
 ### Layer model (top → bottom)
 
-1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, and engine together. Creates a session via `context.GlobalSessionMgr`, a shared `BackgroundTaskManager`, then registers all tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry. The `BackgroundTaskManager` is injected into both `BashTool` instances and its `Cleanup()` is deferred on exit. Calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `CostTracker` for usage monitoring and prints cumulative token/cost stats at the end.
+1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, background task manager, and engine together. Creates a session via `context.GlobalSessionMgr`, a shared `background.TaskManager`, then registers all tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry. The task manager is injected into both `BashTool` instances and its `Cleanup()` is deferred on exit. Calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `cost.Tracker` for usage monitoring and prints cumulative token/cost stats at the end.
 
 2. **Engine** (`internal/engine/`) — the core ReAct loop in `loop.go`. Each turn:
    - Builds context from dynamic system prompt (via `context.PromptComposer`) + working memory (last 20 messages from `context.Session`).
@@ -56,35 +56,40 @@ go run ./cmd/bench/
    - `OpenAIProvider` (`openai.go`): uses `openai-go/v3` SDK, translates internal `schema.Message` to OpenAI API format. Thinking mode enabled by default (DeepSeek `reasoning_content` extracted into `Message.ReasoningContent`, re-injected on multi-turn tool calls).
    - `ClaudeProvider` (`claude.go`): uses `anthropic-sdk-go`, sends system prompt separately, translates ToolUseBlock/ToolResultBlock.
 
-5. **Tools** (`internal/tools/`) — `Registry` maps tool names to `BaseTool` implementations.
+5. **Tools** (`internal/tools/`) — tool collection plus registry/execution scheduling. `Registry` maps tool names to `BaseTool` implementations.
    - `BaseTool` interface: `Name()`, `Definition()` (JSON Schema), `Execute(ctx, args) (string, error)`.
    - Optional `LockHinter` interface: tools that implement it declare path-level lock requirements. Tools without it (bash) take the global write lock.
    - `MiddlewareFunc`: intercepts tool calls before lock acquisition. Used by feishu approval to block dangerous commands.
    - `ExecuteParallel`: concurrent execution via `sync.WaitGroup` + buffered channel semaphore (cap 5), preserving result order by index.
-   - `PathLockManager` (`lockmgr.go`): two-tier locking — global `RWMutex` (bash vs file tools mutual exclusion) + per-path `RWMutex` pool (same-path serial, cross-path parallel). Paths are sorted/normalized to prevent deadlocks. `refCount` auto-cleans entries from the map.
+   - Path locking (`path_locker.go`): private two-tier locking used by `Registry` — global `RWMutex` (bash vs file tools mutual exclusion) + per-path `RWMutex` pool (same-path serial, cross-path parallel). Paths are sorted/normalized to prevent deadlocks. `refCount` auto-cleans entries from the map.
    - 6 registered tools:
      - `read_file` — reads file content with `start_line`/`end_line` range. Truncated at 50KB.
      - `write_file` — creates or overwrites files. Auto-creates parent directories.
      - `edit_file` — exact string replacement. Two-pass algorithm: L1 exact match → L2 newline-normalized fallback. Returns structured errors (`ErrOldTextNotFound` / `ErrOldTextAmbiguous`).
-     - `bash` — foreground + background task management. Default `action=run` with 30s timeout. New params: `background` (bool, use `true` to start persistent services without blocking), `task_id` (optional identifier, auto-generated), `action` (one of `run`/`list`/`status`/`logs`/`stop`), `lines` (for `logs`, default 80). `background:true` starts the process via `cmd.Start()` with `Setpgid: true` (independent process group) and immediately returns task ID/PID/log path. Logs write to `.claw/run/<task_id>.log` under the workDir. `stop` kills the entire process group via `syscall.Kill(-pgid, SIGKILL)`, preventing orphan child processes. The `BackgroundTaskManager` (map + `sync.Mutex`, `internal/tools/bgmanager.go`) is shared between main and read-only `BashTool` instances, with `Cleanup()` deferred in `main` to stop all running tasks on exit. Timeout recovery hints reference `background:true` instead of `nohup`.
+     - `bash` — foreground execution plus background task control. Default `action=run` with 30s timeout. New params: `background` (bool, use `true` to start persistent services without blocking), `task_id` (optional identifier, auto-generated), `action` (one of `run`/`list`/`status`/`logs`/`stop`), `lines` (for `logs`, default 80). `background:true` starts the process through `background.TaskManager`, which uses `cmd.Start()` with `Setpgid: true` (independent process group) and immediately returns task ID/PID/log path. Logs write to `.claw/run/<task_id>.log` under the workDir. `stop` kills the entire process group via `syscall.Kill(-pgid, SIGKILL)`, preventing orphan child processes. Timeout recovery hints reference `background:true` instead of `nohup`.
      - `spawn_subagent` (`subagent.go`) — delegates exploration to an isolated sub-agent with read-only tools (read_file + bash). Uses `AgentRunner` interface to avoid circular imports.
      - `skill` (`skill.go`) — loads a skill's full SKILL.md body on demand by name. Part of the progressive disclosure pattern: the system prompt only carries a compact index, and the model calls this tool when a skill matches the current task.
 
-6. **Feishu** (`internal/feishu/`) — Feishu IM integration:
+6. **Background tasks** (`internal/background/`) — shared runtime service used by `bash`.
+   - `TaskManager`: tracks task metadata, owns process handles, writes logs under `.claw/run/`, validates `task_id`, and performs cleanup on process exit.
+
+7. **Feishu** (`internal/feishu/`) — Feishu IM integration:
    - `FeishuBot` (`bot.go`): WebSocket-based bot that receives messages and routes them to `AgentEngine.Run`. `FeishuReporter` sends progress back to chat.
    - `ApprovalManager` (`approval.go`): sends interactive approval cards (approve/deny buttons) for dangerous commands. Auto-rejects on timeout. `IsDangerousCommand` uses regex to detect risky operations.
 
-7. **Schema** (`internal/schema/`) — domain types shared across all layers:
+8. **Schema** (`internal/schema/`) — domain types shared across all layers:
    - `Message`: Role + Content + optional ToolCalls (assistant) / ToolCallID (user tool results) + optional ReasoningContent (assistant thinking trace).
    - `ToolCall`: ID, Name, Arguments (json.RawMessage).
    - `ToolResult`: ToolCallID, Output, ErrorCode, IsError.
    - `ToolError` (`errors.go`): structured error with `Code` (ErrorCode), `Message`, `Cause`. Implements `Unwrap()` for error chain support.
    - `Usage` struct: `PromptTokens` + `CompletionToken` fields, attached to assistant `Message` via `Message.Usage *Usage`.
 
-8. **Observability** (`internal/observability/`) — cost tracking and telemetry:
-   - `CostTracker` (`tracker.go`): decorator implementing `LLMProvider` that wraps the real provider. Per call, it measures latency, reads `Usage` from the response, computes cost against a hardcoded `PricingModel` map (USD/1M tokens), logs a dashboard line, and calls `session.RecordUsage()` to accumulate totals.
+9. **Cost tracking** (`internal/cost/`) — LLM usage and cost accounting:
+   - `Tracker` (`tracker.go`): decorator implementing `LLMProvider` that wraps the real provider. Per call, it measures latency, reads `Usage` from the response, computes cost against a hardcoded `PricingModel` map (USD/1M tokens), logs a dashboard line, and calls `session.RecordUsage()` to accumulate totals.
    - Pricing is model-keyed (e.g. `"deepseek-v4-flash": {InputPrice: 0.14, OutputPrice: 0.28}`). Unknown models log zero cost rather than erroring.
-   - `Span` (`trace.go`): tree-structured span tracing via context propagation. `StartSpan(ctx, name)` creates a child span stored in context; the engine records `Agent.Run` (root), `Turn-N`, `LLM.Action`, and `Tool.Execute` spans. `runWithLocks` attaches `tool_name`, `arguments`, and on completion either `error`, `output_preview`, or `intercepted`/`reject_reason` attributes. `ExportTraceToFile` writes the full tree as indented JSON to `.claw/traces/` on session end.
+
+10. **Trace** (`internal/trace/`) — execution timeline telemetry:
+   - `Span` (`trace.go`): tree-structured span tracing via context propagation. `StartSpan(ctx, name)` creates a child span stored in context; the engine records `Agent.Run` (root), `Turn-N`, `LLM.Action`, and `Tool.Execute` spans. `runWithLocks` attaches `tool_name`, `arguments`, and on completion either `error`, `output_preview`, or `intercepted`/`reject_reason` attributes. `ExportToFile` writes the full tree as indented JSON to `.claw/traces/` on session end.
 
 ### Provider switching
 
@@ -92,7 +97,7 @@ The `LLMProvider` interface lets you swap backends without changing the engine o
 
 ### Tool sandboxing
 
-All tools receive the engine's `workDir` and resolve paths relative to it. Foreground bash commands run under a 30-second timeout, output truncated at 30KB. Background bash tasks (`background:true`) bypass the timeout and run independently. File reads are truncated at 50KB. The `PathLockManager` ensures safe concurrent access: same-path operations serialize, cross-path operations run in parallel, and bash operations globally exclude file operations.
+All tools receive the engine's `workDir` and resolve paths relative to it. Foreground bash commands run under a 30-second timeout, output truncated at 30KB. Background bash tasks (`background:true`) bypass the timeout and run independently through `internal/background`. File reads are truncated at 50KB. The registry's private path locker ensures safe concurrent access: same-path operations serialize, cross-path operations run in parallel, and bash operations globally exclude file operations.
 
 ### Self-healing mechanisms
 

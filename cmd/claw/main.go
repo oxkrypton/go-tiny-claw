@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/oxkrypton/go-tiny-claw/internal/background"
 	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/cost"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
-	"github.com/oxkrypton/go-tiny-claw/internal/observability"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
+	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
 
 func main() {
@@ -50,10 +52,10 @@ func main() {
 	sess := ctxpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
 
 	// 【全息监控装配】：用 Cost Tracker 将真实大脑包裹起来
-	trackedProvider := observability.NewCostTracker(realProvider, modelName, sess)
+	trackedProvider := cost.NewTracker(realProvider, modelName, sess)
 
 	// 后台任务管理器（主工具表和只读表共享）
-	bgManager := tools.NewBackgroundTaskManager(workDir)
+	bgManager := background.NewTaskManager(workDir)
 	defer bgManager.Cleanup()
 
 	// 子智能体只准备受限的只读注册表
@@ -81,11 +83,11 @@ func main() {
 	registry.Register(tools.NewSkillTool(workDir))
 
 	// 【全息追踪装配】：初始化链路追踪 Root Span
-	ctx, rootSpan := observability.StartSpan(context.Background(), "CLI.TaskRun")
+	ctx, rootSpan := trace.StartSpan(context.Background(), "CLI.TaskRun")
 	rootSpan.AddAttribute("Prompt", *promptPtr)
 	defer func() {
 		rootSpan.EndSpan()
-		_ = observability.ExportTraceToFile(rootSpan, workDir, sess.ID)
+		_ = trace.ExportToFile(rootSpan, workDir, sess.ID)
 	}()
 
 	fmt.Printf("\n🎯 收到任务: %s\n\n", *promptPtr)
