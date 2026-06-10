@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/memory"
+	"github.com/oxkrypton/go-tiny-claw/internal/prompt"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
+	"github.com/oxkrypton/go-tiny-claw/internal/recovery"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
@@ -16,10 +19,10 @@ import (
 type AgentEngine struct {
 	provider  provider.LLMProvider
 	registry  tools.Registry
-	PlanMode  bool                    // 暴露给外部的计划模式开关
-	compactor *ctxpkg.Compactor       // 压缩器实例
-	recovery  *ctxpkg.RecoveryManager // 错误增强
-	injector  *ReminderInjector       //提醒注入器
+	PlanMode  bool                      // 暴露给外部的计划模式开关
+	compactor *memory.Compactor         // 压缩器实例
+	recovery  *recovery.RecoveryManager // 错误增强
+	injector  *ReminderInjector         //提醒注入器
 }
 
 func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *AgentEngine {
@@ -27,14 +30,14 @@ func NewAgentEngine(p provider.LLMProvider, r tools.Registry, planMode bool) *Ag
 		provider:  p,
 		registry:  r,
 		PlanMode:  planMode,
-		compactor: ctxpkg.NewCompactor(20000, 6),
-		recovery:  ctxpkg.NewRecoveryManager(),
+		compactor: memory.NewCompactor(20000, 6),
+		recovery:  recovery.NewRecoveryManager(),
 		injector:  NewReminderInjector(),
 	}
 }
 
 // Run 启动 Agent 的生命周期
-func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter Reporter) error {
+func (e *AgentEngine) Run(ctx context.Context, session *sessionpkg.Session, reporter Reporter) error {
 	log.Printf("[Engine] 会话 [%s]，锁定工作区: %s (PlanMode: %v)\n", session.ID, session.WorkDir, e.PlanMode)
 
 	// 开启 Root Span，记录整个任务的生命周期
@@ -53,7 +56,7 @@ func (e *AgentEngine) Run(ctx context.Context, session *ctxpkg.Session, reporter
 	}()
 
 	// 根据当前 Session 的工作区，动态组装最新的 System Prompt
-	composer := ctxpkg.NewPromptComposer(session.WorkDir, e.PlanMode)
+	composer := prompt.NewPromptComposer(session.WorkDir, e.PlanMode)
 	systemMsg := composer.Build()
 
 	turnCount := 0

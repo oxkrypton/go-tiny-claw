@@ -1,35 +1,40 @@
-package context
+package prompt
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
-// PromptComposer 负责根据工作区环境动态生成 System Prompt
-type PromptComposer struct {
-	workDir     string
-	planMode    bool
-	skillLoader *SkillLoader
+// SystemPromptOptions 描述生成系统提示词所需的动态输入。
+type SystemPromptOptions struct {
+	WorkDir    string
+	PlanMode   bool
+	SkillIndex string
 }
 
-func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
-	return &PromptComposer{
-		workDir:     workDir,
-		planMode:    planMode,
-		skillLoader: NewSkillLoader(workDir),
+// BuildSystemPrompt 拼接系统提示词正文，不负责包装 schema.Message。
+func BuildSystemPrompt(opts SystemPromptOptions) string {
+	var builder strings.Builder
+
+	builder.WriteString(coreSystemPrompt)
+
+	if opts.PlanMode {
+		builder.WriteString(planModeSystemPrompt)
 	}
+
+	if guide := loadProjectGuide(opts.WorkDir); guide != "" {
+		builder.WriteString(guide)
+	}
+
+	if opts.SkillIndex != "" {
+		builder.WriteString(opts.SkillIndex)
+	}
+
+	return builder.String()
 }
 
-// Build 组装并返回一条完整的 RoleSystem 消息
-func (c *PromptComposer) Build() schema.Message {
-	var promptBuilder strings.Builder
-
-	// 1. 极简内核 (Minimal Core) //
-	// 确立基本身份与最底线的红线纪律
-	promptBuilder.WriteString(`# 核心身份
+const coreSystemPrompt = `# 核心身份
 你叫 Jarvis，一个由驾驭工程驱动的骨灰级研发助手。
 你具备极简主义哲学，拒绝废话。你能通过系统提供的内置工具，创建、读取、修改和执行工作区中的代码。
 
@@ -38,10 +43,9 @@ func (c *PromptComposer) Build() schema.Message {
 2. 创建新文件时，务必使用 write_file，并同时提供 path 和 content 参数。
 3. 编辑文件前务必先读取现有文件，以理解上下文。
 4. 遇到工具执行报错时，仔细阅读 stderr，尝试自己修正命令并重试。
-`)
+`
 
-	if c.planMode {
-		promptBuilder.WriteString(`
+const planModeSystemPrompt = `
 # 长程任务与状态外部化强制规范 (Plan Mode: ON)
 
 当你收到一条新指令被唤醒时，你必须、且只能按照以下【绝对顺序】执行你的动作：
@@ -59,27 +63,17 @@ func (c *PromptComposer) Build() schema.Message {
 
 **[STEP 3: 迷失时的自救]**
 - 如果你在执行中遇到了报错，或者不知道下一步该干嘛了，立即使用 read_file 重新读取 ` + "`TODO.md`" + ` 确认自己的位置。
-`)
+`
+
+func loadProjectGuide(workDir string) string {
+	content, err := os.ReadFile(filepath.Join(workDir, "AGENTS.md"))
+	if err != nil {
+		return ""
 	}
 
-	// 2. 外部化状态: 加载项目专属规范 (AGENTS.md)
-	agentsMDPath := filepath.Join(c.workDir, "AGENTS.md")
-	content, err := os.ReadFile(agentsMDPath)
-	if err == nil {
-		promptBuilder.WriteString("\n# 项目专属指南 (来自 AGENTS.md)")
-		promptBuilder.WriteString(string(content))
-		promptBuilder.WriteString("\n```\n")
-
-	}
-
-	// 3. 动态加载 skill 索引（渐进式披露：仅注入名称+触发条件，完整指令通过 skill 工具按需加载）
-	skillContent := c.skillLoader.LoadIndex()
-	if skillContent != "" {
-		promptBuilder.WriteString(skillContent)
-	}
-
-	return schema.Message{
-		Role:    schema.RoleSystem,
-		Content: promptBuilder.String(),
-	}
+	var builder strings.Builder
+	builder.WriteString("\n# 项目专属指南 (来自 AGENTS.md)")
+	builder.WriteString(string(content))
+	builder.WriteString("\n```\n")
+	return builder.String()
 }

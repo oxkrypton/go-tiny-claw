@@ -1,5 +1,5 @@
-// internal/context/session.go
-package context
+// internal/session/session.go
+package session
 
 import (
 	"sync"

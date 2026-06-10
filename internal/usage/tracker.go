@@ -1,13 +1,13 @@
-package cost
+package usage
 
 import (
 	"context"
 	"log"
 	"time"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 )
 
 // PricingModel 定义了不同大模型的计费标准 (单位: 美元/1M Tokens)
@@ -23,11 +23,11 @@ var PricingModel = map[string]struct {
 type Tracker struct {
 	nextProvider provider.LLMProvider
 	modelName    string
-	session      *ctxpkg.Session //当前所属的对话(用于累加总成本)
+	session      *sessionpkg.Session //当前所属的对话(用于累加总成本)
 }
 
 // NewTracker 接收一个现有的 Provider，返回一个被监控的 Provider。
-func NewTracker(next provider.LLMProvider, modelName string, session *ctxpkg.Session) *Tracker {
+func NewTracker(next provider.LLMProvider, modelName string, session *sessionpkg.Session) *Tracker {
 	return &Tracker{
 		nextProvider: next,
 		modelName:    modelName,

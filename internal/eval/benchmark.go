@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/background"
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
-	"github.com/oxkrypton/go-tiny-claw/internal/cost"
+	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 )
 
@@ -93,12 +93,12 @@ func (b *BenchmarkRunner) runSingleTest(ctx context.Context, tc TestCase) TestRe
 		}
 	}
 
-	session := ctxpkg.GlobalSessionMgr.GetOrCreate(tc.ID, workDir)
+	session := sessionpkg.GlobalSessionMgr.GetOrCreate(tc.ID, workDir)
 
 	// 初始化真实的 Provider大脑
 	llmProvider := provider.NewOpenAIProvider(b.modelName)
 
-	trackedProvider := cost.NewTracker(llmProvider, b.modelName, session)
+	trackedProvider := usage.NewTracker(llmProvider, b.modelName, session)
 
 	// 注入的工具注册表
 	registry := tools.NewRegistry()

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -25,13 +25,13 @@ type FeishuBot struct {
 	appID     string
 	appSecret string
 	engine    *engine.AgentEngine // 持有核心引擎引用
-	sess      ctxpkg.Session
+	sess      sessionpkg.Session
 	r         *FeishuReporter
 	running   map[string]bool // chatId → 是否正在执行 Agent 任务
 	runMu     sync.Mutex
 }
 
-func NewFeishuBot(eng *engine.AgentEngine, sess ctxpkg.Session) *FeishuBot {
+func NewFeishuBot(eng *engine.AgentEngine, sess sessionpkg.Session) *FeishuBot {
 	appID := os.Getenv("FEISHU_APP_ID")
 	appSecret := os.Getenv("FEISHU_APP_SECRET")
 

@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/prompt"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 )
 
 type SkillTool struct {
-	loader *ctxpkg.SkillLoader
+	loader *prompt.SkillLoader
 }
 
 func NewSkillTool(workDir string) *SkillTool {
-	return &SkillTool{loader: ctxpkg.NewSkillLoader(workDir)}
+	return &SkillTool{loader: prompt.NewSkillLoader(workDir)}
 }
 
 func (t *SkillTool) Name() string {

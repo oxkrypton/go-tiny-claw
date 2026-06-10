@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/background"
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
-	"github.com/oxkrypton/go-tiny-claw/internal/cost"
+	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
@@ -49,10 +49,10 @@ func main() {
 	realProvider = provider.NewOpenAIProvider(modelName)
 
 	// 获取持久化 Session
-	sess := ctxpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
+	sess := sessionpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
 
 	// 【全息监控装配】：用 Cost Tracker 将真实大脑包裹起来
-	trackedProvider := cost.NewTracker(realProvider, modelName, sess)
+	trackedProvider := usage.NewTracker(realProvider, modelName, sess)
 
 	// 后台任务管理器（主工具表和只读表共享）
 	bgManager := background.NewTaskManager(workDir)

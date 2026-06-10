@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	ctxpkg "github.com/oxkrypton/go-tiny-claw/internal/context"
+	"github.com/oxkrypton/go-tiny-claw/internal/prompt"
 )
 
 func TestSkillTool_LoadOne(t *testing.T) {
@@ -42,7 +42,7 @@ func TestSkillLoaderIndex(t *testing.T) {
 		t.Fatalf("写 skill 失败: %v", err)
 	}
 
-	loader := ctxpkg.NewSkillLoader(dir)
+	loader := prompt.NewSkillLoader(dir)
 	out := loader.LoadIndex()
 	if !strings.Contains(out, "demo") || !strings.Contains(out, "test skill") {
 		t.Fatalf("索引不符合预期: %s", out)

@@ -1,5 +1,5 @@
-// internal/context/compactor.go
-package context
+// internal/memory/compactor.go
+package memory
 
 import (
 	"fmt"

@@ -1,5 +1,5 @@
-// internal/context/recovery.go
-package context
+// internal/recovery/recovery.go
+package recovery
 
 import (
 	"fmt"
