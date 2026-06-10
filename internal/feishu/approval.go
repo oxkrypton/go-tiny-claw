@@ -141,10 +141,12 @@ func IsDangerousCommand(toolName string, args string) bool {
 	// 针对 bash 的高危操作
 	if toolName == "bash" {
 		dangerousPatterns := []string{
-			`rm\s+-r`, // 级联删除
-			`sudo\s+`, // 提权
-			`drop\s+`, // 数据库删除
-			`>.*\.go`, // 恶意覆盖源代码
+			`rm\s+-r`, // 级联删除 
+			`sudo\s+`, // 提权操作 
+			`drop\s+`, // 数据库危险命令 
+			`>.*\.go`, // 恶意覆盖源代码 
+			`systemctl\s+`, // 拦截系统级服务管理 
+			`kill\s+`, // 拦截杀进程操作
 		}
 		for _, p := range dangerousPatterns {
 			matched, _ := regexp.MatchString(p, args)

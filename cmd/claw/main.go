@@ -37,7 +37,7 @@ func main() {
 	}
 
 	fmt.Println("==================================================")
-	fmt.Printf("🚀 启动 go-tiny-claw CLI 引擎...\n")
+	fmt.Printf("🚀 启动 go-tiny-claw ...\n")
 	fmt.Printf("📁 锁定工作区: %s\n", workDir)
 	fmt.Println("==================================================")
 
@@ -61,7 +61,7 @@ func main() {
 	readOnlyRegistry.Register(tools.NewReadFileTool(workDir))
 	readOnlyRegistry.Register(tools.NewBashTool(workDir, bgManager))
 
-	// 5. 初始化彩色终端输出器
+	// 5. 初始化终端输出器
 	reporter := engine.NewTerminalReporter()
 
 	// 3. 初始化工具与执行层
