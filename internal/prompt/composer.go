@@ -2,20 +2,21 @@ package prompt
 
 import (
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	"github.com/oxkrypton/go-tiny-claw/internal/skill"
 )
 
 // PromptComposer 负责根据工作区环境动态生成 System Prompt
 type PromptComposer struct {
 	workDir     string
 	planMode    bool
-	skillLoader *SkillLoader
+	skillLoader *skill.Loader
 }
 
 func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
 	return &PromptComposer{
 		workDir:     workDir,
 		planMode:    planMode,
-		skillLoader: NewSkillLoader(workDir),
+		skillLoader: skill.NewLoader(workDir),
 	}
 }
 

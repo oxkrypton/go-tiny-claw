@@ -1,4 +1,4 @@
-package prompt
+package skill
 
 import (
 	"fmt"
@@ -15,18 +15,18 @@ type Skill struct {
 	Body        string //markdown 正文指令
 }
 
-// SkillLoader 负责从本地文件系统中加载并解析符合规范的技能模板
-type SkillLoader struct {
+// Loader 负责从本地文件系统中加载并解析符合规范的技能模板
+type Loader struct {
 	workDir string
 }
 
-func NewSkillLoader(workDir string) *SkillLoader {
-	return &SkillLoader{workDir: workDir}
+func NewLoader(workDir string) *Loader {
+	return &Loader{workDir: workDir}
 }
 
 // LoadIndex 扫描 .claw/skills 目录，仅注入技能名称与触发条件（渐进式披露的索引层）。
 // 完整执行指令通过 skill 工具按需加载，避免每轮烧 token。
-func (s *SkillLoader) LoadIndex() string {
+func (s *Loader) LoadIndex() string {
 	skillBaseDir := filepath.Join(s.workDir, ".claw", "skills")
 
 	if _, err := os.Stat(skillBaseDir); os.IsNotExist(err) {
@@ -64,7 +64,7 @@ func (s *SkillLoader) LoadIndex() string {
 
 // LoadOne 按技能名称加载单个 SKILL.md 的完整正文（去除 YAML frontmatter）。
 // 若未找到匹配的技能，error 中列出所有可用技能名，以供模型自愈重试。
-func (s *SkillLoader) LoadOne(name string) (string, error) {
+func (s *Loader) LoadOne(name string) (string, error) {
 	skillBaseDir := filepath.Join(s.workDir, ".claw", "skills")
 
 	var allNames []string

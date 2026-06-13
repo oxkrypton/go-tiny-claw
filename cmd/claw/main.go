@@ -16,6 +16,7 @@ import (
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
+	"github.com/oxkrypton/go-tiny-claw/internal/skill"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 	"github.com/oxkrypton/go-tiny-claw/internal/usage"
@@ -85,7 +86,7 @@ func main() {
 	registry.Register(tools.NewWriteFileTool(workDir))
 	registry.Register(tools.NewEditFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir, bgManager))
-	registry.Register(tools.NewSkillTool(workDir))
+	skill.Register(registry, workDir)
 	mcpManager.Register(ctx, registry)
 
 	// 在 CLI 模式下，我们默认开启 YOLO 模式（全权信任本地执行），
@@ -94,7 +95,7 @@ func main() {
 	// 4. 初始化核心引擎 (组装器内部会自动加载 Composer, Compactor, Recovery, Reminders)
 	// 开启 PlanMode = true
 	eng := engine.NewAgentEngine(trackedProvider, registry, false)
-	
+
 	//注册 SubAgent 功能
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
 

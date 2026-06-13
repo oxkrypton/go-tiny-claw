@@ -47,10 +47,9 @@ go run ./cmd/bench/
 3. **Session** (`internal/session/`) — conversation state and history management:
    - `Session` (`session.go`): thread-safe conversation history with `sync.RWMutex`. `GetWorkingMemory(limit)` slices the last N messages with orphan ToolResult protection (skips leading orphan tool results to avoid API 400 errors). `RecordUsage(prompt, completion, cost)` accumulates token usage and cost. `SessionManager` + `GlobalSessionMgr` support multi-user/multi-terminal isolation.
 
-4. **Prompt** (`internal/prompt/`) — dynamic system prompt assembly and skill loading:
-   - `PromptComposer` (`composer.go`): orchestrates prompt assembly, calling `BuildSystemPrompt()` with plan mode, skill index, and project guide (AGENTS.md).
+4. **Prompt** (`internal/prompt/`) — dynamic system prompt assembly:
+   - `PromptComposer` (`composer.go`): orchestrates prompt assembly, calling `BuildSystemPrompt()` with plan mode, skill index (via `skill.Loader.LoadIndex()`), and project guide (AGENTS.md).
    - Core system prompt text (`system_prompt.go`): the agent's identity and discipline rules. Plan mode instructions injected conditionally. `loadProjectGuide()` reads AGENTS.md.
-   - `SkillLoader` (`skill.go`): progressive disclosure via two-level loading. `LoadIndex()` scans `.claw/skills/*/SKILL.md` and injects only skill names + trigger descriptions into the system prompt (compact index). `LoadOne(name)` loads a single skill's full SKILL.md body on demand via the `skill` tool. On miss, returns all available skill names for model self-healing.
 
 5. **Memory** (`internal/memory/`) — context compaction to prevent OOM:
    - `Compactor` (`compactor.go`): monitors context length. When exceeding threshold (default 20,000 chars), masks old tool results and truncates large recent ones (head+tail preservation).
@@ -70,36 +69,39 @@ go run ./cmd/bench/
    - `MiddlewareFunc`: intercepts tool calls before lock acquisition. Used by feishu approval to block dangerous commands.
    - `ExecuteParallel`: concurrent execution via `sync.WaitGroup` + buffered channel semaphore (cap 5), preserving result order by index.
    - Path locking (`path_locker.go`): private two-tier locking used by `Registry` — global `RWMutex` (bash vs file tools mutual exclusion) + per-path `RWMutex` pool (same-path serial, cross-path parallel). Paths are sorted/normalized to prevent deadlocks. `refCount` auto-cleans entries from the map.
-   - 6 registered tools:
+   - 5 built-in tools:
      - `read_file` — reads file content with `start_line`/`end_line` range. Truncated at 50KB.
      - `write_file` — creates or overwrites files. Auto-creates parent directories.
      - `edit_file` — exact string replacement. Two-pass algorithm: L1 exact match → L2 newline-normalized fallback. Returns structured errors (`ErrOldTextNotFound` / `ErrOldTextAmbiguous`).
      - `bash` — foreground execution plus background task control. Default `action=run` with 30s timeout. New params: `background` (bool, use `true` to start persistent services without blocking), `task_id` (optional identifier, auto-generated), `action` (one of `run`/`list`/`status`/`logs`/`stop`), `lines` (for `logs`, default 80). `background:true` starts the process through `background.TaskManager`, which uses `cmd.Start()` with `Setpgid: true` (independent process group) and immediately returns task ID/PID/log path. Logs write to `.claw/run/<task_id>.log` under the workDir. `stop` kills the entire process group via `syscall.Kill(-pgid, SIGKILL)`, preventing orphan child processes. Timeout recovery hints reference `background:true` instead of `nohup`.
      - `spawn_subagent` (`subagent.go`) — delegates exploration to an isolated sub-agent with read-only tools (read_file + bash). Uses `AgentRunner` interface to avoid circular imports.
-     - `skill` (`skill.go`) — loads a skill's full SKILL.md body on demand by name. Part of the progressive disclosure pattern: the system prompt only carries a compact index, and the model calls this tool when a skill matches the current task.
 
 9. **Background tasks** (`internal/background/`) — shared runtime service used by `bash`.
    - `TaskManager`: tracks task metadata, owns process handles, writes logs under `.claw/run/`, validates `task_id`, and performs cleanup on process exit.
 
-10. **Feishu** (`internal/feishu/`) — Feishu IM integration:
+10. **Skill** (`internal/skill/`) — skill loading and the `skill` tool, extracted from `internal/prompt/skill.go` and `internal/tools/skill.go`:
+    - `Loader` (`loader.go`): progressive disclosure via two-level loading. `LoadIndex()` scans `.claw/skills/*/SKILL.md` and returns a compact index (skill names + descriptions) for the system prompt. `LoadOne(name)` loads a single skill's full SKILL.md body (YAML frontmatter stripped). On miss, returns all available skill names for model self-healing. `parseSkillMD()` parses `name:`/`description:` from frontmatter.
+    - `Tool` (`tool.go`): implements `BaseTool`, calls `Loader.LoadOne()` on demand. `Register(registry, workDir)` is a convenience function that creates and registers the tool in one call.
+
+11. **Feishu** (`internal/feishu/`) — Feishu IM integration:
     - `FeishuBot` (`bot.go`): WebSocket-based bot that receives messages and routes them to `AgentEngine.Run`. `FeishuReporter` sends progress back to chat.
     - `ApprovalManager` (`approval.go`): sends interactive approval cards (approve/deny buttons) for dangerous commands. Auto-rejects on timeout. `IsDangerousCommand` uses regex to detect risky operations.
 
-11. **Schema** (`internal/schema/`) — domain types shared across all layers:
+12. **Schema** (`internal/schema/`) — domain types shared across all layers:
     - `Message`: Role + Content + optional ToolCalls (assistant) / ToolCallID (user tool results) + optional ReasoningContent (assistant thinking trace).
     - `ToolCall`: ID, Name, Arguments (json.RawMessage).
     - `ToolResult`: ToolCallID, Output, ErrorCode, IsError.
     - `ToolError` (`errors.go`): structured error with `Code` (ErrorCode), `Message`, `Cause`. Implements `Unwrap()` for error chain support.
     - `Usage` struct: `PromptTokens` + `CompletionToken` fields, attached to assistant `Message` via `Message.Usage *Usage`.
 
-12. **Usage tracking** (`internal/usage/`) — LLM usage and cost accounting:
+13. **Usage tracking** (`internal/usage/`) — LLM usage and cost accounting:
     - `Tracker` (`tracker.go`): decorator implementing `LLMProvider` that wraps the real provider. Per call, it measures latency, reads `Usage` from the response, computes cost against a hardcoded `PricingModel` map (USD/1M tokens), logs a dashboard line, and calls `session.RecordUsage()` to accumulate totals.
     - Pricing is model-keyed (e.g. `"deepseek-v4-flash": {InputPrice: 0.14, OutputPrice: 0.28}`). Unknown models log zero cost rather than erroring.
 
-13. **Trace** (`internal/trace/`) — execution timeline telemetry:
+14. **Trace** (`internal/trace/`) — execution timeline telemetry:
     - `Span` (`trace.go`): tree-structured span tracing via context propagation. `StartSpan(ctx, name)` creates a child span stored in context; the engine records `Agent.Run` (root), `Turn-N`, `LLM.Action`, and `Tool.Execute` spans. `runWithLocks` attaches `tool_name`, `arguments`, and on completion either `error`, `output_preview`, or `intercepted`/`reject_reason` attributes. `ExportToFile` writes the full tree as indented JSON to `.claw/traces/` on session end.
 
-14. **MCP Client** (`internal/mcpclient/`) — MCP (Model Context Protocol) stdio client, integrating external MCP servers' tools into the tool registry:
+15. **MCP Client** (`internal/mcpclient/`) — MCP (Model Context Protocol) stdio client, integrating external MCP servers' tools into the tool registry:
     - `config.go`: Loads `.claw/mcp.json` (Claude Desktop-compatible format). `ServerConfig` defines command, args, env, timeout per server. Missing file returns empty config (no-op).
     - `Manager` (`maneger.go`): `NewManager(workDir)` loads config; `Register(ctx, registry)` starts each enabled MCP server as a stdio subprocess, performs the MCP handshake (`initialize` → `initialized` notification), calls `tools/list` with cursor pagination to discover remote tools, and wraps each as an `MCPTool` registered into the tool registry.
     - `RPCClient` (`jsonrpc.go`): Minimal JSON-RPC 2.0 client over stdio. Uses MCP framing (`Content-Length: N\r\n\r\n`), atomic request IDs, per-request response channels, background read loop. Supports `call` (request-response) and `notify` (fire-and-forget). `close()` kills the subprocess and closes pipes.

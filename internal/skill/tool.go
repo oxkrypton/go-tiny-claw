@@ -1,26 +1,30 @@
-package tools
+package skill
 
 import (
 	"context"
 	"encoding/json"
 
-	"github.com/oxkrypton/go-tiny-claw/internal/prompt"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
+	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 )
 
-type SkillTool struct {
-	loader *prompt.SkillLoader
+type Tool struct {
+	loader *Loader
 }
 
-func NewSkillTool(workDir string) *SkillTool {
-	return &SkillTool{loader: prompt.NewSkillLoader(workDir)}
+func Register(registry tools.Registry, workDir string) {
+	registry.Register(NewTool(workDir))
 }
 
-func (t *SkillTool) Name() string {
+func NewTool(workDir string) *Tool {
+	return &Tool{loader: NewLoader(workDir)}
+}
+
+func (t *Tool) Name() string {
 	return "skill"
 }
 
-func (t *SkillTool) Definition() schema.ToolDefinition {
+func (t *Tool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name:        t.Name(),
 		Description: "加载指定技能的完整执行指南。当你根据技能描述判断某个技能适用于当前任务时，调用此工具获取其详细指令。",
@@ -37,7 +41,7 @@ func (t *SkillTool) Definition() schema.ToolDefinition {
 	}
 }
 
-func (t *SkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var input struct {
 		Skill string `json:"skill"`
 	}

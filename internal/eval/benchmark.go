@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/background"
-	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
+	"github.com/oxkrypton/go-tiny-claw/internal/skill"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
+	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 )
 
 // TestCase 定义了需要 Agent 完成并验证的独立任务
@@ -125,7 +126,7 @@ func (b *BenchmarkRunner) runSingleTest(ctx context.Context, tc TestCase) TestRe
 	//将subagent功能注入
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
 	// skill 动态加载工具（渐进式披露：按需加载完整 SKILL.md）
-	registry.Register(tools.NewSkillTool(workDir))
+	skill.Register(registry, workDir)
 
 	session.Append(schema.Message{Role: schema.RoleUser, Content: tc.TaskPrompt})
 	err := eng.Run(ctx, session, nil)
