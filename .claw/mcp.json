@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "enabled": true,
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/krypton/Documents/go-tiny-claw"
+      ],
+      "timeout_seconds": 30
+    }
+  }
+}

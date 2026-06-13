@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/background"
-	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/mcpclient"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
 	"github.com/oxkrypton/go-tiny-claw/internal/tools"
 	"github.com/oxkrypton/go-tiny-claw/internal/trace"
+	"github.com/oxkrypton/go-tiny-claw/internal/usage"
 )
 
 func main() {
@@ -51,12 +52,24 @@ func main() {
 	// 获取持久化 Session
 	sess := sessionpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
 
+	// 【全息追踪装配】：初始化链路追踪 Root Span
+	ctx, rootSpan := trace.StartSpan(context.Background(), "CLI.TaskRun")
+	rootSpan.AddAttribute("Prompt", *promptPtr)
+	defer func() {
+		rootSpan.EndSpan()
+		_ = trace.ExportToFile(rootSpan, workDir, sess.ID)
+	}()
+
 	// 【全息监控装配】：用 Cost Tracker 将真实大脑包裹起来
 	trackedProvider := usage.NewTracker(realProvider, modelName, sess)
 
 	// 后台任务管理器（主工具表和只读表共享）
 	bgManager := background.NewTaskManager(workDir)
 	defer bgManager.Cleanup()
+
+	// MCP Server 管理器
+	mcpManager, err := mcpclient.NewManager(workDir)
+	defer mcpManager.Close()
 
 	// 子智能体只准备受限的只读注册表
 	readOnlyRegistry := tools.NewRegistry()
@@ -70,25 +83,20 @@ func main() {
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
-	registry.Register(tools.NewBashTool(workDir, bgManager))
 	registry.Register(tools.NewEditFileTool(workDir))
+	registry.Register(tools.NewBashTool(workDir, bgManager))
+	registry.Register(tools.NewSkillTool(workDir))
+	mcpManager.Register(ctx, registry)
 
 	// 在 CLI 模式下，我们默认开启 YOLO 模式（全权信任本地执行），
 	// 因此这里暂时不挂载 Feishu 审批 Middleware。
 
 	// 4. 初始化核心引擎 (组装器内部会自动加载 Composer, Compactor, Recovery, Reminders)
-	// 开启 EnableThinking = true
-	eng := engine.NewAgentEngine(trackedProvider, registry, true)
+	// 开启 PlanMode = true
+	eng := engine.NewAgentEngine(trackedProvider, registry, false)
+	
+	//注册 SubAgent 功能
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
-	registry.Register(tools.NewSkillTool(workDir))
-
-	// 【全息追踪装配】：初始化链路追踪 Root Span
-	ctx, rootSpan := trace.StartSpan(context.Background(), "CLI.TaskRun")
-	rootSpan.AddAttribute("Prompt", *promptPtr)
-	defer func() {
-		rootSpan.EndSpan()
-		_ = trace.ExportToFile(rootSpan, workDir, sess.ID)
-	}()
 
 	fmt.Printf("\n🎯 收到任务: %s\n\n", *promptPtr)
 

@@ -65,6 +65,7 @@ const planModeSystemPrompt = `
 - 如果你在执行中遇到了报错，或者不知道下一步该干嘛了，立即使用 read_file 重新读取 ` + "`TODO.md`" + ` 确认自己的位置。
 `
 
+// 加载工作区的AGENT.md
 func loadProjectGuide(workDir string) string {
 	content, err := os.ReadFile(filepath.Join(workDir, "AGENTS.md"))
 	if err != nil {

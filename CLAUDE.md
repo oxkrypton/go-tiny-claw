@@ -31,7 +31,7 @@ go run ./cmd/bench/
 
 ### Layer model (top → bottom)
 
-1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, background task manager, and engine together. Creates a session via `session.GlobalSessionMgr`, a shared `background.TaskManager`, then registers all tools (read_file, write_file, edit_file, bash, spawn_subagent, skill) plus a read-only subagent registry. The task manager is injected into both `BashTool` instances and its `Cleanup()` is deferred on exit. Calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `usage.Tracker` for usage monitoring and prints cumulative token/cost stats at the end.
+1. **Entry point** (`cmd/claw/main.go`) — wires the provider, tool registry, background task manager, MCP manager, and engine together. Creates a session via `session.GlobalSessionMgr`, a shared `background.TaskManager`, then registers all tools (read_file, write_file, edit_file, bash, skill, spawn_subagent) plus a read-only subagent registry. Also initializes `mcpclient.Manager` and calls `mcpManager.Register(ctx, registry)` to register MCP server tools. The task manager is injected into `BashTool` and its `Cleanup()` is deferred on exit. Calls `eng.Run()` with a user prompt. Wraps the raw LLM provider with `usage.Tracker` for usage monitoring and prints cumulative token/cost stats at the end. Passes `enablePlan=false` to `NewAgentEngine` — plan mode is off by default in CLI.
 
 2. **Engine** (`internal/engine/`) — the core ReAct loop in `loop.go`. Each turn:
    - Builds context from dynamic system prompt (via `prompt.PromptComposer`) + working memory (last 20 messages from `session.Session`).
@@ -98,6 +98,14 @@ go run ./cmd/bench/
 
 13. **Trace** (`internal/trace/`) — execution timeline telemetry:
     - `Span` (`trace.go`): tree-structured span tracing via context propagation. `StartSpan(ctx, name)` creates a child span stored in context; the engine records `Agent.Run` (root), `Turn-N`, `LLM.Action`, and `Tool.Execute` spans. `runWithLocks` attaches `tool_name`, `arguments`, and on completion either `error`, `output_preview`, or `intercepted`/`reject_reason` attributes. `ExportToFile` writes the full tree as indented JSON to `.claw/traces/` on session end.
+
+14. **MCP Client** (`internal/mcpclient/`) — MCP (Model Context Protocol) stdio client, integrating external MCP servers' tools into the tool registry:
+    - `config.go`: Loads `.claw/mcp.json` (Claude Desktop-compatible format). `ServerConfig` defines command, args, env, timeout per server. Missing file returns empty config (no-op).
+    - `Manager` (`maneger.go`): `NewManager(workDir)` loads config; `Register(ctx, registry)` starts each enabled MCP server as a stdio subprocess, performs the MCP handshake (`initialize` → `initialized` notification), calls `tools/list` with cursor pagination to discover remote tools, and wraps each as an `MCPTool` registered into the tool registry.
+    - `RPCClient` (`jsonrpc.go`): Minimal JSON-RPC 2.0 client over stdio. Uses MCP framing (`Content-Length: N\r\n\r\n`), atomic request IDs, per-request response channels, background read loop. Supports `call` (request-response) and `notify` (fire-and-forget). `close()` kills the subprocess and closes pipes.
+    - `MCPTool` (`tool.go`): Adapts a remote MCP tool to the `BaseTool` interface. Name format: `mcp_<server>_<tool>`. Forwards `Execute` calls to `tools/call` over JSON-RPC. Renders `toolContent` results (text, image, audio, resource).
+    - `name.go`: `sanitizeName()` converts MCP server/tool names to safe function names (lowercase alphanumeric + underscore only).
+    - `type.go`: MCP protocol types — `initializeResult`, `listToolsResult`, `remoteTool`, `callToolResult`, `toolContent` (supports text/image/audio/resource).
 
 ### Provider switching
 
