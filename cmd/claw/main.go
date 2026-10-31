@@ -3,15 +3,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/background"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
+	"github.com/oxkrypton/go-tiny-claw/internal/feishu"
 	"github.com/oxkrypton/go-tiny-claw/internal/mcpclient"
 	"github.com/oxkrypton/go-tiny-claw/internal/provider"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
@@ -29,7 +34,16 @@ func main() {
 	sessionPtr := flag.String("session", "cli_default_session", "指定会话 ID，支持断点续传")
 	flag.Parse()
 
-	if *promptPtr == "" {
+	// 在检查命令行任务之前加载 .env，飞书模式无需 -prompt。
+	mode, err := loadMode()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if mode == "feishu" && (strings.TrimSpace(os.Getenv("FEISHU_APP_ID")) == "" || strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")) == "") {
+		log.Fatal("飞书模式需要设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
+	}
+
+	if mode == "cli" && *promptPtr == "" {
 		fmt.Println("用法: go-tiny-claw -prompt \"你的任务描述\" [-dir /path/to/workdir] [-session session_id]")
 		os.Exit(1)
 	}
@@ -43,6 +57,7 @@ func main() {
 	fmt.Println("==================================================")
 	fmt.Printf("🚀 启动 go-tiny-claw ...\n")
 	fmt.Printf("📁 锁定工作区: %s\n", workDir)
+	fmt.Printf("📡 启动模式: %s\n", mode)
 	fmt.Println("==================================================")
 
 	// 2. 初始化核心基础服务
@@ -50,11 +65,15 @@ func main() {
 	modelName := "deepseek-v4-flash"
 	realProvider = provider.NewOpenAIProvider(modelName)
 
-	// 获取持久化 Session
+	// 获取当前进程中的 Session
 	sess := sessionpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
 
 	// 【全息追踪装配】：初始化链路追踪 Root Span
-	ctx, rootSpan := trace.StartSpan(context.Background(), "CLI.TaskRun")
+	spanName := "CLI.TaskRun"
+	if mode == "feishu" {
+		spanName = "Feishu.Listen"
+	}
+	ctx, rootSpan := trace.StartSpan(context.Background(), spanName)
 	rootSpan.AddAttribute("Prompt", *promptPtr)
 	defer func() {
 		rootSpan.EndSpan()
@@ -70,6 +89,9 @@ func main() {
 
 	// MCP Server 管理器
 	mcpManager, err := mcpclient.NewManager(workDir)
+	if err != nil {
+		log.Fatalf("初始化 MCP 配置失败: %v", err)
+	}
 	defer mcpManager.Close()
 
 	// 子智能体只准备受限的只读注册表
@@ -87,17 +109,24 @@ func main() {
 	registry.Register(tools.NewEditFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir, bgManager))
 	skill.Register(registry, workDir)
-	mcpManager.Register(ctx, registry)
-
-	// 在 CLI 模式下，我们默认开启 YOLO 模式（全权信任本地执行），
-	// 因此这里暂时不挂载 Feishu 审批 Middleware。
+	if err := mcpManager.Register(ctx, registry); err != nil {
+		log.Fatalf("注册 MCP 工具失败: %v", err)
+	}
 
 	// 4. 初始化核心引擎 (组装器内部会自动加载 Composer, Compactor, Recovery, Reminders)
-	// 开启 PlanMode = true
 	eng := engine.NewAgentEngine(trackedProvider, registry, false)
 
 	//注册 SubAgent 功能
 	registry.Register(tools.NewSubagentTool(eng, readOnlyRegistry, reporter))
+
+	if mode == "feishu" {
+		bot := feishu.NewFeishuBot(eng, sess)
+		fmt.Println("📨 飞书机器人启动中，连接成功后可在飞书中发送任务。")
+		if err := bot.Start(ctx); err != nil {
+			log.Fatalf("飞书机器人启动失败: %v", err)
+		}
+		return
+	}
 
 	fmt.Printf("\n🎯 收到任务: %s\n\n", *promptPtr)
 
@@ -115,4 +144,21 @@ func main() {
 	fmt.Printf("💰 Session 累计消耗: $%.6f | Token: Input %d, Output %d\n",
 		sess.TotalCostCNY, sess.TotalPromptTokens, sess.TotalCompletionTokens)
 	fmt.Println("==================================================")
+}
+
+// loadMode 从当前目录的 .env 加载配置，已有环境变量优先。
+func loadMode() (string, error) {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("读取 .env 配置失败，请检查文件权限和配置格式")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("mode")))
+	switch mode {
+	case "", "cli":
+		return "cli", nil
+	case "feishu":
+		return "feishu", nil
+	default:
+		return "", errors.New("mode 配置无效，请设置为 cli 或 feishu")
+	}
 }

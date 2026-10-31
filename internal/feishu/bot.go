@@ -25,13 +25,13 @@ type FeishuBot struct {
 	appID     string
 	appSecret string
 	engine    *engine.AgentEngine // 持有核心引擎引用
-	sess      sessionpkg.Session
+	sess      *sessionpkg.Session
 	r         *FeishuReporter
 	running   map[string]bool // chatId → 是否正在执行 Agent 任务
 	runMu     sync.Mutex
 }
 
-func NewFeishuBot(eng *engine.AgentEngine, sess sessionpkg.Session) *FeishuBot {
+func NewFeishuBot(eng *engine.AgentEngine, sess *sessionpkg.Session) *FeishuBot {
 	appID := os.Getenv("FEISHU_APP_ID")
 	appSecret := os.Getenv("FEISHU_APP_SECRET")
 
@@ -130,7 +130,7 @@ func (b *FeishuBot) handleAgentRun(chatId string, prompt string) {
 	b.sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
 
 	// 启动引擎
-	err := b.engine.Run(context.Background(), &b.sess, reporter)
+	err := b.engine.Run(context.Background(), b.sess, reporter)
 	if err != nil {
 		reporter.sendMsg(fmt.Sprintf("❌ Agent 运行崩溃: %v", err))
 
