@@ -21,6 +21,7 @@ type runtime struct {
 	session    *session.Session
 	background *background.TaskManager
 	mcp        *mcpclient.Manager
+	tools      toolsets
 }
 
 func newRuntime(ctx context.Context, cfg config, reporter engine.Reporter) (_ *runtime, err error) {
@@ -44,6 +45,7 @@ func newRuntime(ctx context.Context, cfg config, reporter engine.Reporter) (_ *r
 	if err != nil {
 		return nil, err
 	}
+	rt.tools = sets
 	rt.engine = engine.NewAgentEngine(tracked, sets.main, false)
 	sets.registerSubagent(rt.engine, reporter)
 	return rt, nil

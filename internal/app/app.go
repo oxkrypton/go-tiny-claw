@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"github.com/oxkrypton/go-tiny-claw/internal/cli"
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/feishu"
+	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
 
@@ -51,6 +53,17 @@ func Run(ctx context.Context, options Options, input io.Reader, output io.Writer
 	switch cfg.mode {
 	case modeFeishu:
 		bot := feishu.NewFeishuBot(rt.engine, rt.session)
+		approve := func(ctx context.Context, call schema.ToolCall) (bool, string) {
+			args := string(call.Arguments)
+			if !feishu.IsDangerousCommand(call.Name, args) {
+				return true, ""
+			}
+			return feishu.GlovalApprovalMgr.WaitForApproval(
+				call.ID, call.Name, args, bot.Reporter(), 5*time.Minute,
+			)
+		}
+		rt.tools.main.Use(approve)
+		rt.tools.subagent.Use(approve)
 		fmt.Fprintln(output, "📨 飞书机器人启动中，连接成功后可在飞书中发送任务。")
 		if err := bot.Start(ctx); err != nil {
 			return fmt.Errorf("飞书机器人启动失败: %w", err)
