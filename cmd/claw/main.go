@@ -2,10 +2,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,23 +31,18 @@ import (
 
 func main() {
 	// 1. 命令行参数解析
-	promptPtr := flag.String("prompt", "", "要交给 Agent 执行的任务描述")
+	promptPtr := flag.String("prompt", "", "可选的首条任务，执行后继续多轮对话")
 	workDirPtr := flag.String("dir", ".", "Agent 运行的工作区目录路径 (默认为当前目录)")
-	sessionPtr := flag.String("session", "cli_default_session", "指定会话 ID，支持断点续传")
+	sessionPtr := flag.String("session", "cli_default_session", "指定当前进程中的会话 ID")
 	flag.Parse()
 
-	// 在检查命令行任务之前加载 .env，飞书模式无需 -prompt。
+	// 加载 .env 并选择启动模式。
 	mode, err := loadMode()
 	if err != nil {
 		log.Fatal(err)
 	}
 	if mode == "feishu" && (strings.TrimSpace(os.Getenv("FEISHU_APP_ID")) == "" || strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")) == "") {
 		log.Fatal("飞书模式需要设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
-	}
-
-	if mode == "cli" && *promptPtr == "" {
-		fmt.Println("用法: go-tiny-claw -prompt \"你的任务描述\" [-dir /path/to/workdir] [-session session_id]")
-		os.Exit(1)
 	}
 
 	// 解析工作区绝对路径
@@ -69,7 +66,7 @@ func main() {
 	sess := sessionpkg.GlobalSessionMgr.GetOrCreate(*sessionPtr, workDir)
 
 	// 【全息追踪装配】：初始化链路追踪 Root Span
-	spanName := "CLI.TaskRun"
+	spanName := "CLI.Chat"
 	if mode == "feishu" {
 		spanName = "Feishu.Listen"
 	}
@@ -109,9 +106,10 @@ func main() {
 	registry.Register(tools.NewEditFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir, bgManager))
 	skill.Register(registry, workDir)
-	if err := mcpManager.Register(ctx, registry); err != nil {
-		log.Fatalf("注册 MCP 工具失败: %v", err)
-	}
+	// mcp工具
+	// if err := mcpManager.Register(ctx, registry); err != nil {
+	// 	log.Fatalf("注册 MCP 工具失败: %v", err)
+	// }
 
 	// 4. 初始化核心引擎 (组装器内部会自动加载 Composer, Compactor, Recovery, Reminders)
 	eng := engine.NewAgentEngine(trackedProvider, registry, false)
@@ -128,22 +126,52 @@ func main() {
 		return
 	}
 
-	fmt.Printf("\n🎯 收到任务: %s\n\n", *promptPtr)
-
-	// 将用户的 Prompt 压入 Session 记忆
-	sess.Append(schema.Message{Role: schema.RoleUser, Content: *promptPtr})
-
-	// 6. 发起冲锋：启动 Main Loop！
-	err = eng.Run(ctx, sess, reporter)
-	if err != nil {
-		log.Fatalf("\n💥 引擎运行崩溃: %v", err)
+	if err := runCLI(ctx, eng, sess, reporter, os.Stdin, os.Stdout, *promptPtr); err != nil {
+		log.Printf("❌ 对话中断: %v", err)
 	}
+}
 
-	fmt.Println("\n==================================================")
-	fmt.Printf("✨ 任务结束。总耗时: %v\n", time.Since(rootSpan.StartTime))
-	fmt.Printf("💰 Session 累计消耗: $%.6f | Token: Input %d, Output %d\n",
-		sess.TotalCostCNY, sess.TotalPromptTokens, sess.TotalCompletionTokens)
-	fmt.Println("==================================================")
+// runCLI 复用引擎和会话，逐条处理终端输入。
+func runCLI(ctx context.Context, eng *engine.AgentEngine, sess *sessionpkg.Session, reporter engine.Reporter, input io.Reader, output io.Writer, initialPrompt string) error {
+	reader := bufio.NewReader(input)
+	prompt := strings.TrimSpace(initialPrompt)
+	fmt.Fprintln(output, "\n💬 已进入多轮对话，输入任务后按回车；输入 /exit 或 /quit 退出。")
+
+	for {
+		endOfInput := false
+		if prompt == "" {
+			fmt.Fprint(output, "你> ")
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return errors.New("读取终端输入失败，请检查输入来源")
+			}
+			endOfInput = errors.Is(err, io.EOF)
+			prompt = strings.TrimSpace(line)
+		}
+
+		if prompt == "/exit" || prompt == "/quit" {
+			fmt.Fprintln(output, "👋 对话已结束。")
+			return nil
+		}
+
+		if prompt != "" {
+			start := time.Now()
+			sess.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
+			if err := eng.Run(ctx, sess, reporter); err != nil {
+				fmt.Fprintf(output, "\n❌ 本轮任务执行失败: %v\n", err)
+			} else {
+				fmt.Fprintf(output, "✨ 本轮完成，耗时: %v\n", time.Since(start))
+			}
+			fmt.Fprintf(output, "💰 会话累计消耗: $%.6f | Token: Input %d, Output %d\n\n",
+				sess.TotalCostCNY, sess.TotalPromptTokens, sess.TotalCompletionTokens)
+		}
+
+		if endOfInput {
+			fmt.Fprintln(output, "\n👋 对话已结束。")
+			return nil
+		}
+		prompt = ""
+	}
 }
 
 // loadMode 从当前目录的 .env 加载配置，已有环境变量优先。
