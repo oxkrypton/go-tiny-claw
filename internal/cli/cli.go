@@ -13,6 +13,7 @@ import (
 	"github.com/oxkrypton/go-tiny-claw/internal/engine"
 	"github.com/oxkrypton/go-tiny-claw/internal/schema"
 	sessionpkg "github.com/oxkrypton/go-tiny-claw/internal/session"
+	"github.com/oxkrypton/go-tiny-claw/internal/trace"
 )
 
 // Runner 是终端对话需要的任务执行能力。
@@ -35,6 +36,7 @@ func New(runner Runner, sess *sessionpkg.Session, reporter engine.Reporter) *Con
 func (c *Conversation) Run(ctx context.Context, input io.Reader, output io.Writer, initialPrompt string) error {
 	reader := bufio.NewReader(input)
 	prompt := strings.TrimSpace(initialPrompt)
+	var prompts []string
 	fmt.Fprintln(output, "\n💬 已进入多轮对话，输入任务后按回车；输入 /exit 或 /quit 退出。")
 
 	for {
@@ -55,6 +57,10 @@ func (c *Conversation) Run(ctx context.Context, input io.Reader, output io.Write
 		}
 
 		if prompt != "" {
+			prompts = append(prompts, prompt)
+			if span := trace.SpanFromContext(ctx); span != nil {
+				span.AddAttribute("Prompts", prompts)
+			}
 			start := time.Now()
 			c.session.Append(schema.Message{Role: schema.RoleUser, Content: prompt})
 			if err := c.runner.Run(ctx, c.session, c.reporter); err != nil {

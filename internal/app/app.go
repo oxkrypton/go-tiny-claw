@@ -34,7 +34,9 @@ func Run(ctx context.Context, options Options, input io.Reader, output io.Writer
 		spanName = "Feishu.Listen"
 	}
 	ctx, span := trace.StartSpan(ctx, spanName)
-	span.AddAttribute("Prompt", cfg.initialPrompt)
+	if cfg.initialPrompt != "" {
+		span.AddAttribute("Prompt", cfg.initialPrompt)
+	}
 	defer func() {
 		span.EndSpan()
 		if exportErr := trace.ExportToFile(span, cfg.workDir, cfg.sessionID); exportErr != nil {

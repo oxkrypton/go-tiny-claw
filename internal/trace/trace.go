@@ -45,6 +45,12 @@ func StartSpan(ctx context.Context, name string) (context.Context, *Span) {
 	return newCtx, span
 }
 
+// SpanFromContext 返回 Context 中当前的 Span；没有则返回 nil。
+func SpanFromContext(ctx context.Context) *Span {
+	span, _ := ctx.Value(contextKey{}).(*Span)
+	return span
+}
+
 // EndSpan 结束跨度，计算耗时。
 func (s *Span) EndSpan() {
 	s.EndTime = time.Now()

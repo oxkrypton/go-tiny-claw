@@ -86,7 +86,14 @@ func (e *AgentEngine) Run(ctx context.Context, session *sessionpkg.Session, repo
 		//记录 Action 调用
 		actCtx, actSpan := trace.StartSpan(turnCtx, "LLM.Action")
 		// 每一轮都直接注入工具，让模型在同一次响应中决定回复文本或发起工具调用。
+		// 记录模型的实际输入（压缩后的上下文），便于回放时复现当时的提示
+		actSpan.AddAttribute("input", compactedContext)
 		actionResp, err := e.provider.Generate(actCtx, compactedContext, availableTools)
+		if err != nil {
+			actSpan.AddAttribute("error", err.Error())
+		} else {
+			actSpan.AddAttribute("output", actionResp)
+		}
 		actSpan.EndSpan() //结束行动跨度
 		if err != nil {
 			return fmt.Errorf("Action 阶段生成失败: %w", err)
